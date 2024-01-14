@@ -556,6 +556,23 @@ VkImageView CreateImageView(VkDevice device, VkFormat format, VkImage image, VkI
     return imageView;
 }
 
+VkFramebuffer CreateFramebuffer(VkDevice device, const std::vector<VkImageView>& imageviews, VkRenderPass render_pass, uint32_t width, uint32_t height)
+{
+    VkFramebufferCreateInfo framebufferCreate {
+        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .flags = 0,
+        .renderPass = render_pass,
+        .attachmentCount = static_cast<uint32_t>(imageviews.size()),
+        .pAttachments = imageviews.data(),
+        .width = width,
+        .height = height,
+        .layers = 1,
+    };
+    VkFramebuffer framebuffer;
+    VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &framebuffer));
+    return framebuffer;
+}
+
 void PrintImplementationInformation()
 {
     uint32_t ext_count;
@@ -1170,6 +1187,7 @@ void CreateSwapchainData(VkPhysicalDevice physical_device, VkDevice device, VkSu
 
         per_image.image_view = CreateImageView(device, chosen_color_format, per_swapchainimage[i].image, VK_IMAGE_ASPECT_COLOR_BIT);
 
+        per_image.framebuffer = CreateFramebuffer(device, {per_image.image_view, depth_image_view}, render_pass, width, height);
         VkImageView imageviews[] = {per_image.image_view, depth_image_view};
         VkFramebufferCreateInfo framebufferCreate {
             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
