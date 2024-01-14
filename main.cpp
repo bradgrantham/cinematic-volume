@@ -60,7 +60,7 @@ public:
     int GetDepth() { return height; }
     void* GetData() { return pixels.data(); }
     size_t GetSize() { return pixels.size(); }
-    T Sample(const vec3& uvw);
+    T Sample(const vec3& str);
     T FetchUnchecked(uint32_t i, uint32_t j, uint32_t k);
 };
 
@@ -111,6 +111,27 @@ T Image<T>::Sample(const vec3& str)
     T val = v0 * a0 + v1 * a1;
 
     return val;
+}
+
+template <typename T>
+VkFormat GetVulkanFormat();
+
+template <>
+VkFormat GetVulkanFormat<float>()
+{
+    return VK_FORMAT_R32_SFLOAT;
+}
+
+template <>
+VkFormat GetVulkanFormat<uint16_t>()
+{
+    return VK_FORMAT_R16_UNORM;
+}
+
+template <>
+VkFormat GetVulkanFormat<vec3>()
+{
+    return VK_FORMAT_R32G32B32_SFLOAT;
 }
 
 static constexpr uint64_t DEFAULT_FENCE_TIMEOUT = 100000000000;
@@ -1600,46 +1621,15 @@ void Cleanup()
     drawable->ReleaseDeviceData(device);
 }
 
-std::vector<uint16_t> ct_data;
-std::vector<vec3> ct_data_normal;
+std::shared_ptr<Image<uint16_t>> volume;
+std::shared_ptr<Image<vec3>> volume_normal;
 
-std::tuple<int, int, int> NormalizedToIndices(const vec3& uvw)
+void SetCTNormal(std::vector<vec3>& ct_data_normal, int i, int j, int k, const vec3& normal)
 {
-    int i = std::clamp(static_cast<int>(uvw[0] * 512), 0, 511);
-    int j = std::clamp(static_cast<int>(uvw[1] * 512), 0, 511);
-    int k = std::clamp(static_cast<int>(uvw[2] * 114), 0, 113);
-    return {i, j, k};
-}
-
-uint16_t LookupCTDensity(int i, int j, int k)
-{
-    return ct_data[i + j * 512 + k * 512 * 512];
-}
-
-uint16_t LookupCTDensity(const vec3& uvw)
-{
-    auto [i, j, k] = NormalizedToIndices(uvw);
-    return LookupCTDensity(i, j, k);
-}
-
-void SetCTNormal(const vec3& uvw, const vec3& normal)
-{
-    auto [i, j, k] = NormalizedToIndices(uvw);
     ct_data_normal[i + j * 512 + k * 512 * 512] = normal;
 }
 
-vec3 LookupCTNormal(int i, int j, int k)
-{
-    return ct_data_normal[i + j * 512 + k * 512 * 512];
-}
-
-vec3 LookupCTNormal(const vec3& uvw)
-{
-    auto [i, j, k] = NormalizedToIndices(uvw);
-    return LookupCTNormal(i, j, k);
-}
-
-void CalculateGradients()
+void CalculateGradients(std::vector<vec3>& ct_data_normal)
 {
     float du = 1.1f / 512;
     float dv = 1.1f / 512;
@@ -1648,16 +1638,16 @@ void CalculateGradients()
     for(int k = 0; k < 114; k++) {
         for(int j = 0; j < 512; j++) {
             for(int i = 0; i < 512; i++) {
-                vec3 uvw { i / 512.0f, j / 512.0f, k / 114.0f };
-                float v = LookupCTDensity(uvw);
-                float gu = (LookupCTDensity(uvw + vec3(du, 0, 0)) - v) / du;
-                float gv = (LookupCTDensity(uvw + vec3(0, dv, 0)) - v) / dv;
-                float gw = (LookupCTDensity(uvw + vec3(0, 0, dw)) - v) / dw;
+                vec3 str { i / 512.0f, j / 512.0f, k / 114.0f };
+                float v = volume->Sample(str);
+                float gu = (volume->Sample(str + vec3(du, 0, 0)) - v) / du;
+                float gv = (volume->Sample(str + vec3(0, dv, 0)) - v) / dv;
+                float gw = (volume->Sample(str + vec3(0, 0, dw)) - v) / dw;
                 vec3 normal {gu, gv, gw};
                 if(length(normal) > .001) {
-                    SetCTNormal(uvw, normalize(normal));
+                    SetCTNormal(ct_data_normal, i, j, k, normalize(normal));
                 } else {
-                    SetCTNormal(uvw, vec3(0, 0, 0));
+                    SetCTNormal(ct_data_normal, i, j, k, vec3(0, 0, 0));
                 }
             }
         }
@@ -1666,8 +1656,8 @@ void CalculateGradients()
 
 void LoadCTData()
 {
-    ct_data.resize(512 * 512 * 114);
-    ct_data_normal.resize(512 * 512 * 114);
+    std::vector<uint16_t> ct_data(512 * 512 * 114);
+    std::vector<vec3> ct_data_normal(512 * 512 * 114);
     if(true) {
         for(int i = 0; i < 114; i++) {
             static char filename[512];
@@ -1690,34 +1680,41 @@ void LoadCTData()
             }
             fclose(fp);
 
-#if 0
-            snprintf(filename, sizeof(filename), "file_%03d.ppm", i);
-            fp = fopen(filename, "wb");
-            if(!fp) {
-                printf("couldn't open \"%s\" for writing\n", filename);
-                exit(EXIT_FAILURE);
+            if(false) {
+                // Validate data by writing out as a PPM
+                snprintf(filename, sizeof(filename), "file_%03d.ppm", i);
+                fp = fopen(filename, "wb");
+                if(!fp) {
+                    printf("couldn't open \"%s\" for writing\n", filename);
+                    exit(EXIT_FAILURE);
+                }
+                fprintf(fp, "P5 512 512 255\n");
+                for(int j = 0; j < 512 * 512; j++) {
+                    uint8_t b = ct_data[j + i * 512 * 512] % 256;
+                    fwrite(&b, 1, 1, fp);
+                }
+                fclose(fp);
             }
-            fprintf(fp, "P5 512 512 255\n");
-            for(int j = 0; j < 512 * 512; j++) {
-                uint8_t b = ct_data[j + i * 512 * 512] % 256;
-                fwrite(&b, 1, 1, fp);
-            }
-            fclose(fp);
-#endif
         }
     } else {
+        // Make a sphere in the volume as a test case
         for(int k = 0; k < 114; k++) {
             for(int j = 0; j < 512; j++) {
                 for(int i = 0; i < 512; i++) {
-                    vec3 uvw { i / 512.0f, j / 512.0f, k / 114.0f };
-                    float r = length(uvw - vec3(.5f, .5f, .5f));
+                    vec3 str { i / 512.0f, j / 512.0f, k / 114.0f };
+                    float r = length(str - vec3(.5f, .5f, .5f));
                     int index = i + j * 512 + k * 512 * 512;
-                    ct_data[index] = (r > .5) ? 0 : 65535;
+                    ct_data[index] = (r > .5) ? 0 : 10000;
                 }
             }
         }
     }
-    CalculateGradients();
+
+    volume = std::make_shared<Image<uint16_t>>(512, 512, 114, ct_data);
+
+    CalculateGradients(ct_data_normal);
+
+    volume_normal = std::make_shared<Image<vec3>>(512, 512, 114, ct_data_normal);
 }
 
 uint16_t threshold = 8500;
@@ -1729,13 +1726,17 @@ bool trace_volume(const ray& ray, vec3& color, vec3& normal)
     if(rn) {
         // vec3 enter_volume = ray.at(rn.t0);
         // vec3 exit_volume = ray.at(rn.t1);
+        // XXX should calculate a step size
         for(float t = rn.t0; t < rn.t1; t += 1/512.0) {
             // enter_volume -= volume_bounds.boxmin;
             // exit_volume -= volume_bounds.boxmin;
-            uint16_t density = LookupCTDensity(ray.at(t));
+
+            uint16_t density = volume->Sample(ray.at(t));
             // XXX here lookup density through a table
+
             if(density > threshold) {
-                normal = LookupCTNormal(ray.at(t));
+                normal = volume_normal->Sample(ray.at(t));
+
                 // XXX here lookup color through a table
                 if(density > 8300) {
                     color = vec3(1, 1, 1); 
@@ -2256,221 +2257,6 @@ static void ScrollCallback(GLFWwindow *window, double dx, double dy)
     current_manip->move(static_cast<float>(dx / width), static_cast<float>(dy / height));
 }
 
-bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, std::string& texture_name, float specular_color[4], float& shininess)
-{
-    char texture_name_c_str[512];
-    char tag_name_c_str[512];
-
-    // XXX each triangle can reference a texture, but I ignore all but the last in this hacked parser
-    while(fscanf(fp,"\"%[^\"]\"", texture_name_c_str) == 1) {
-	if(fscanf(fp,"%s ", tag_name_c_str) != 1) {
-            // XXX each triangle can reference a tag name, but I ignore all but the last in this hacked parser
-            // It really can be ignored in a sense because it's a hint about part assemblies, spatial locality, etc
-	    fprintf(stderr, "couldn't read tag name\n");
-	    return false;
-	}
-
-        // XXX each triangle can reference object specular and shininess, but I ignore all but the last in this hacked parser
-	if(fscanf(fp,"%f %f %f %f %f ", &specular_color[0], &specular_color[1],
-	    &specular_color[2], &specular_color[3], &shininess) != 5) {
-	    fprintf(stderr, "couldn't read specular properties\n");
-	    return false;
-	}
-
-	if(shininess > 0 && shininess < 1) {
-	    // XXX I forgot what shininess units are!
-	    shininess *= 10;
-	}
-
-        for(int i = 0; i < 3; i++) {
-            float v[3];
-            float n[3];
-            float c[4];
-            float t[2];
-
-	    if(fscanf(fp,"%g %g %g %g %g %g %g %g %g %g %g %g ",
-	        &v[0], &v[1], &v[2],
-	        &n[0], &n[1], &n[2],
-	        &c[0], &c[1], &c[2], &c[3],
-	        &t[0], &t[1]) != 12) {
-
-		fprintf(stderr, "couldn't read Vertex\n");
-		return false;
-	    }
-            indices.push_back(static_cast<uint32_t>(vertices.size()));
-            vertices.push_back(Vertex(v, n, c, t));
-        }
-
-        // old code from another project for reference
-        // MATERIAL mtl(texture_name, specular_color, shininess);
-        // sets.get_triangle_set(tag_name, mtl).add_triangle(verts[0], verts[1], verts[2]);
-    }
-
-    texture_name = texture_name_c_str;
-
-    return true;
-}
-
-
-// very old code
-static void skipComments(FILE *fp)
-{
-    int c;
-
-    while((c = fgetc(fp)) == '#')
-        while((c = fgetc(fp)) != '\n');
-    ungetc(c, fp);
-}
-
-
-int pnmRead(FILE *file, int *w, int *h, float **pixels)
-{
-    unsigned char	dummyByte;
-    int			i;
-    float		max;
-    char		token;
-    int			width, height;
-    float		*rgbPixels;
-
-    fscanf(file, " ");
-
-    skipComments(file);
-
-    if(fscanf(file, "P%c ", &token) != 1) {
-         fprintf(stderr, "pnmRead: Had trouble reading PNM tag\n");
-	 return 0;
-    }
-
-    skipComments(file);
-
-    if(fscanf(file, "%d ", &width) != 1) {
-         fprintf(stderr, "pnmRead: Had trouble reading PNM width\n");
-	 return 0;
-    }
-
-    skipComments(file);
-
-    if(fscanf(file, "%d ", &height) != 1) {
-         fprintf(stderr, "pnmRead: Had trouble reading PNM height\n");
-	 return 0;
-    }
-
-    skipComments(file);
-
-    if(token != '1' && token != '4') {
-        if(fscanf(file, "%f", &max) != 1) {
-             fprintf(stderr, "pnmRead: Had trouble reading PNM max value\n");
-	     return 0;
-        }
-    }
-
-    rgbPixels = static_cast<float*>(malloc(width * height * 4 * sizeof(float)));
-    if(rgbPixels == NULL) {
-         fprintf(stderr, "pnmRead: Couldn't allocate %zd bytes\n", width * height * 4 * sizeof(float));
-         fprintf(stderr, "pnmRead: (For a %d by %d image)\n", width, height);
-	 return 0;
-    }
-
-    if(token != '4') {
-	skipComments(file);
-    }
-
-    if(token != '4') { 
-        // ??
-        fread(&dummyByte, 1, 1, file);	/* chuck white space */
-    }
-
-    if(token == '1')
-    {
-	for(i = 0; i < width * height; i++)
-	{
-	    int pixel;
-	    fscanf(file, "%d", &pixel);
-	    pixel = 1 - pixel;
-	    rgbPixels[i * 4 + 0] = pixel;
-	    rgbPixels[i * 4 + 1] = pixel;
-	    rgbPixels[i * 4 + 2] = pixel;
-	    rgbPixels[i * 4 + 3] = 1.0;
-	}
-    }
-    else if(token == '2')
-    {
-	for(i = 0; i < width * height; i++)
-	{
-	    int pixel;
-	    fscanf(file, "%d", &pixel);
-	    rgbPixels[i * 4 + 0] = pixel / max;
-	    rgbPixels[i * 4 + 1] = pixel / max;
-	    rgbPixels[i * 4 + 2] = pixel / max;
-	    rgbPixels[i * 4 + 3] = 1.0;
-	}
-    }
-    else if(token == '3')
-    {
-	for(i = 0; i < width * height; i++)
-	{
-	    int r, g, b;
-	    fscanf(file, "%d %d %d", &r, &g, &b);
-	    rgbPixels[i * 4 + 0] = r / max;
-	    rgbPixels[i * 4 + 1] = g / max;
-	    rgbPixels[i * 4 + 2] = b / max;
-	    rgbPixels[i * 4 + 3] = 1.0;
-	}
-    }
-    else if(token == '4')
-    {
-        int bitnum = 0;
-
-	for(i = 0; i < width * height; i++)
-	{
-	    unsigned char pixel;
-	    unsigned char value = 0;
-
-	    if(bitnum == 0) {
-	        fread(&value, 1, 1, file);
-            }
-
-	    pixel = (1 - ((value >> (7 - bitnum)) & 1));
-	    rgbPixels[i * 4 + 0] = pixel;
-	    rgbPixels[i * 4 + 1] = pixel;
-	    rgbPixels[i * 4 + 2] = pixel;
-	    rgbPixels[i * 4 + 3] = 1.0;
-
-	    if(++bitnum == 8 || ((i + 1) % width) == 0) {
-	        bitnum = 0;
-            }
-	}
-    }
-    else if(token == '5')
-    {
-	for(i = 0; i < width * height; i++)
-	{
-	    unsigned char pixel;
-	    fread(&pixel, 1, 1, file);
-	    rgbPixels[i * 4 + 0] = pixel / max;
-	    rgbPixels[i * 4 + 1] = pixel / max;
-	    rgbPixels[i * 4 + 2] = pixel / max;
-	    rgbPixels[i * 4 + 3] = 1.0;
-	}
-    }
-    else if(token == '6')
-    {
-	for(i = 0; i < width * height; i++)
-	{
-	    unsigned char rgb[3];
-	    fread(rgb, 3, 1, file);
-	    rgbPixels[i * 4 + 0] = rgb[0] / max;
-	    rgbPixels[i * 4 + 1] = rgb[1] / max;
-	    rgbPixels[i * 4 + 2] = rgb[2] / max;
-	    rgbPixels[i * 4 + 3] = 1.0;
-	}
-    }
-    *w = width;
-    *h = height;
-    *pixels = rgbPixels;
-    return 1;
-}
-
 void usage(const char *progName) 
 {
     fprintf(stderr, "usage: %s\n", progName);
@@ -2521,48 +2307,10 @@ void MakeStubDrawable()
     } else {
         current_manip = &volume_manip;
     }
-
-}
-
-template <typename T>
-VkFormat GetVulkanFormat();
-
-template <>
-VkFormat GetVulkanFormat<float>()
-{
-    return VK_FORMAT_R32_SFLOAT;
 }
 
 int main(int argc, char **argv)
 {
-    std::vector<float> pixels(16 * 16);
-    for(int j = 0; j < 16; j++) {
-        for(int i = 0; i < 16; i++) {
-            float u = (i - 7.5) / 16;
-            float v = (j - 7.5) / 16;
-            if(sqrt(u * u + v * v) < .5) {
-                pixels[i + j * 16] = 1.0f;
-            } else {
-                pixels[i + j * 16] = 0.0f;
-            }
-        }
-    }
-    Image image(16, 16, 1, pixels);
-    FILE *fp = fopen("foo.ppm", "wb");
-    fprintf(fp, "P6 256 256 255\n");
-    for(int j = 0; j < 256; j++) {
-        for(int i = 0; i < 256; i++) {
-            vec3 str { i / 256.0f, j / 256.0f, 0.0f };
-            float value = image.Sample(str);
-            uint8_t c[3];
-            c[0] = static_cast<uint8_t>(255 * value);
-            c[1] = static_cast<uint8_t>(255 * value);
-            c[2] = static_cast<uint8_t>(255 * value);
-            fwrite(c, 1, 3, fp);
-        }
-    }
-    fclose(fp);
-
     using namespace VulkanApp;
     
     MakeStubDrawable();
