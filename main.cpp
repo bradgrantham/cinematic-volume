@@ -996,11 +996,11 @@ VkDescriptorSetLayout descriptor_set_layout;
 
 // interaction data
 
-enum { DRAW_VULKAN_DRAW_INDEXED, DRAW_CPU, DRAW_MODE_COUNT };
+enum { DRAW_VULKAN, DRAW_CPU, DRAW_MODE_COUNT };
 int drawing_mode = DRAW_CPU;
 std::map<int, std::string> DrawingModeNames = {
-    {DRAW_VULKAN_DRAW_INDEXED, "Vulkan using DrawIndexed"},
-    {DRAW_CPU, "CPU render"},
+    {DRAW_VULKAN, "Vulkan"},
+    {DRAW_CPU, "CPU"},
 };
 
 float frame = 0.0;
@@ -1944,7 +1944,7 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     frame += 1;
 }
 
-void DrawFrameVulkanDrawIndexed([[maybe_unused]] GLFWwindow *window)
+void DrawFrameVulkan([[maybe_unused]] GLFWwindow *window)
 {
     VkSurfaceCapabilitiesKHR surfcaps;
     VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
@@ -2031,9 +2031,6 @@ void DrawFrameVulkanDrawIndexed([[maybe_unused]] GLFWwindow *window)
 
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &submission.descriptor_set, 0, NULL);
 
-    // 7. Bind the vertex and index buffers
-    drawable->BindForDraw(device, cb);
-
     // 9. Set viewport and scissor parameters
     VkViewport viewport {
         .x = 0,
@@ -2050,7 +2047,9 @@ void DrawFrameVulkanDrawIndexed([[maybe_unused]] GLFWwindow *window)
         .extent{surfcaps.currentExtent.width, surfcaps.currentExtent.height}};
     vkCmdSetScissor(cb, 0, 1, &scissor);
 
+    drawable->BindForDraw(device, cb);
     vkCmdDrawIndexed(cb, drawable->triangleCount * 3, 1, 0, 0, 0);
+
     vkCmdEndRenderPass(cb);
     VK_CHECK(vkEndCommandBuffer(cb));
 
@@ -2097,8 +2096,8 @@ void DrawFrameVulkanDrawIndexed([[maybe_unused]] GLFWwindow *window)
 
 void DrawFrame(GLFWwindow *window)
 {
-    if(drawing_mode == DRAW_VULKAN_DRAW_INDEXED) {
-        DrawFrameVulkanDrawIndexed(window);
+    if(drawing_mode == DRAW_VULKAN) {
+        DrawFrameVulkan(window);
     } else if (drawing_mode == DRAW_CPU) {
         DrawFrameCPU(window);
     }
@@ -2118,13 +2117,15 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
     if(action == GLFW_PRESS) {
         switch(key) {
             case 'M':
-                drawing_mode = (drawing_mode + 1) % DRAW_MODE_COUNT;
-                printf("Current drawing mode: %s\n", DrawingModeNames[drawing_mode].c_str());
-                if(drawing_mode == DRAW_VULKAN_DRAW_INDEXED) {
-                    CurrentManip = &ObjectManip;
-                } else {
-                    CurrentManip = &VolumeManip;
-                    VolumeManip.m_mode = manipulator::ROTATE;
+                if(false) {
+                    drawing_mode = (drawing_mode + 1) % DRAW_MODE_COUNT;
+                    printf("Current drawing mode: %s\n", DrawingModeNames[drawing_mode].c_str());
+                    if(drawing_mode == DRAW_VULKAN) {
+                        CurrentManip = &ObjectManip;
+                    } else {
+                        CurrentManip = &VolumeManip;
+                        VolumeManip.m_mode = manipulator::ROTATE;
+                    }
                 }
                 break;
 
@@ -2462,109 +2463,80 @@ int pnmRead(FILE *file, int *w, int *h, float **pixels)
     return 1;
 }
 
-void LoadModel(const char *filename)
+void usage(const char *progName) 
+{
+    fprintf(stderr, "usage: %s\n", progName);
+}
+
+void MakeStubDrawable()
 {
     using namespace VulkanApp;
-
-    FILE* fp = fopen(filename, "r");
-    if(fp == nullptr) {
-        fprintf(stderr, "couldn't open file %s for reading\n", filename);
-        exit(EXIT_FAILURE);
-    }
-
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
-    std::string texture_name;
-    float specular_color[4];
-    float shininess;
-    ParseTriSrc(fp, vertices, indices, texture_name, specular_color, shininess);
+    float specular_color[4] { 0.8f, 0.8f, 0.8f, 0.8f };
+    float shininess = 10.0f;
 
-    std::shared_ptr<RGBA8UNormImage> texture;
+    float white[4] {1, 1, 1, 1};
+    float no_texture[2] {0, 0};
+    float ll[3] {-1, -1, 0};
+    float lr[3] {1, -1, 0};
+    float ul[3] {-1, -1, 0};
+    float ur[3] {1, -1, 0};
+    float n[3] {0, 0, 1};
+    vertices.push_back(Vertex(ll, n, white, no_texture));
+    vertices.push_back(Vertex(lr, n, white, no_texture));
+    vertices.push_back(Vertex(ul, n, white, no_texture));
+    vertices.push_back(Vertex(ur, n, white, no_texture));
+    indices.push_back(0);
+    indices.push_back(1);
+    indices.push_back(2);
+    indices.push_back(0);
+    indices.push_back(2);
+    indices.push_back(3);
 
-    if(texture_name == "*") {
-
-        // XXX Need a way to have no texture at some point
-        int width = 1, height = 1;
-        std::vector<uint8_t> rgba8_unorm = {255, 255, 255, 255};
-        texture = std::make_shared<RGBA8UNormImage>(width, height, rgba8_unorm);
-
-    } else {
-
-        std::filesystem::path path {filename};
-        std::filesystem::path texture_path = path.parent_path() / texture_name;
-        FILE *texture_file = fopen(texture_path.c_str(), "rb");
-        if(texture_file == nullptr) {
-            fprintf(stderr, "couldn't open texture file %s for reading\n", texture_name.c_str());
-            exit(EXIT_FAILURE);
-        }
-
-        int width = 0, height = 0;
-        float *float_pixels = nullptr;
-        std::vector<uint8_t> rgba8_unorm;
-        int result = pnmRead(texture_file, &width, &height, &float_pixels);
-        if(!result) {
-            fprintf(stderr, "couldn't read PPM image from %s\n", texture_name.c_str());
-            exit(EXIT_FAILURE);
-        }
-
-        rgba8_unorm.resize(4 * width * height);
-        for(int y = 0; y < height; y++) {
-            for(int x = 0; x < width; x++) {
-                for(int c = 0; c < 4; c++) {
-                    rgba8_unorm[c + (x + y * width) * 4] = static_cast<uint8_t>(std::clamp(float_pixels[c + (x + (height - y - 1) * width) * 4] * 255.999f, 0.0f, 255.0f));
-                    // rgba8_unorm[c + (x + y * width) * 4] = static_cast<uint8_t>(std::clamp(float_pixels[c + (x + y * width) * 4] * 255.999f, 0.0f, 255.0f));
-                }
-            }
-        }
-        texture = std::make_shared<RGBA8UNormImage>(width, height, rgba8_unorm);
-
-    }
+    int width = 1, height = 1;
+    std::vector<uint8_t> rgba8_unorm = {255, 255, 255, 255};
+    auto texture = std::make_shared<RGBA8UNormImage>(width, height, rgba8_unorm);
 
     drawable = std::make_unique<Drawable>(vertices, indices, specular_color, shininess, texture);
 
     ObjectManip = manipulator(drawable->bounds, fov / 180.0f * 3.14159f / 2);
     LightManip = manipulator(aabox(), fov / 180.0f * 3.14159f / 2);
-    if(drawing_mode == DRAW_VULKAN_DRAW_INDEXED) {
-        CurrentManip = &ObjectManip;
-    } else {
-        CurrentManip = &VolumeManip;
-    }
 
     vec3 boxmin {0, 0, 0};
     vec3 boxmax {1,1,1}; // {512, 512, 114};
     volume_bounds = aabox(boxmin, boxmax);
     VolumeManip = manipulator(volume_bounds, fov / 180.0f * 3.14159f / 2);
 
-    fclose(fp);
-}
+    if(drawing_mode == DRAW_VULKAN) {
+        CurrentManip = &ObjectManip;
+    } else {
+        CurrentManip = &VolumeManip;
+    }
 
-void usage(const char *progName) 
-{
-    fprintf(stderr, "usage: %s modelFileName\n", progName);
 }
 
 int main(int argc, char **argv)
 {
     using namespace VulkanApp;
     
+    MakeStubDrawable();
     LoadCTData();
 
     beVerbose = (getenv("BE_NOISY") != nullptr);
     enableValidation = (getenv("VALIDATE") != nullptr);
 
-    const char *progName = argv[0];
+    [[maybe_unused]] const char *progName = argv[0];
     argv++;
     argc--;
     while(argc > 0 && argv[0][0] == '-') {
     }
-    if(argc != 1) {
-        fprintf(stderr, "expected a filename\n");
-        usage(progName);
-        exit(EXIT_FAILURE);
-    }
-    const char *input_filename = argv[0];
-
-    LoadModel(input_filename);
+    // if(argc != 1) {
+        // fprintf(stderr, "expected a filename\n");
+        // usage(progName);
+        // exit(EXIT_FAILURE);
+    // }
+    // const char *input_filename = argv[0];
 
     glfwSetErrorCallback(ErrorCallback);
 
