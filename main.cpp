@@ -54,6 +54,13 @@ public:
         pixels(std::move(pixels))
     {}
 
+    Image(int width, int height, int depth) :
+        width(width),
+        height(height),
+        depth(depth),
+        pixels(width * height * depth)
+    {}
+
     VkFormat GetVulkanFormat() { return GetVulkanFormat<T>(); }
     int GetWidth() { return width; }
     int GetHeight() { return height; }
@@ -61,6 +68,9 @@ public:
     void* GetData() { return pixels.data(); }
     size_t GetSize() { return pixels.size(); }
     T Sample(const vec3& str);
+    void SetPixel(int i, int j, int k, const T& v) {
+        pixels[i + j * GetWidth() + k * GetWidth() * GetHeight()] = v;
+    }
     T FetchUnchecked(uint32_t i, uint32_t j, uint32_t k);
 };
 
@@ -1624,58 +1634,55 @@ void Cleanup()
 std::shared_ptr<Image<uint16_t>> volume;
 std::shared_ptr<Image<vec3>> volume_normal;
 
-void SetCTNormal(std::vector<vec3>& ct_data_normal, int i, int j, int k, const vec3& normal)
+std::shared_ptr<Image<vec3>> CalculateGradients(std::shared_ptr<Image<uint16_t>> volume)
 {
-    ct_data_normal[i + j * 512 + k * 512 * 512] = normal;
-}
+    auto volume_normal = std::make_shared<Image<vec3>>(volume->GetWidth(), volume->GetHeight(), volume->GetDepth());
+    float du = 1.1f / volume->GetWidth();
+    float dv = 1.1f / volume->GetHeight();
+    float dw = 1.1f / volume->GetDepth();
 
-void CalculateGradients(std::vector<vec3>& ct_data_normal)
-{
-    float du = 1.1f / 512;
-    float dv = 1.1f / 512;
-    float dw = 1.1f / 114;
-
-    for(int k = 0; k < 114; k++) {
-        for(int j = 0; j < 512; j++) {
-            for(int i = 0; i < 512; i++) {
-                vec3 str { i / 512.0f, j / 512.0f, k / 114.0f };
+    for(int k = 0; k < volume->GetDepth(); k++) {
+        for(int j = 0; j < volume->GetHeight(); j++) {
+            for(int i = 0; i < volume->GetWidth(); i++) {
+                vec3 str { i * 1.0f / volume->GetWidth(), j * 1.0f / volume->GetHeight(), k * 1.0f / volume->GetDepth() };
                 float v = volume->Sample(str);
                 float gu = (volume->Sample(str + vec3(du, 0, 0)) - v) / du;
                 float gv = (volume->Sample(str + vec3(0, dv, 0)) - v) / dv;
                 float gw = (volume->Sample(str + vec3(0, 0, dw)) - v) / dw;
                 vec3 normal {gu, gv, gw};
                 if(length(normal) > .001) {
-                    SetCTNormal(ct_data_normal, i, j, k, normalize(normal));
+                    volume_normal->SetPixel(i, j, k, normalize(normal));
                 } else {
-                    SetCTNormal(ct_data_normal, i, j, k, vec3(0, 0, 0));
+                    volume_normal->SetPixel(i, j, k, vec3(0, 0, 0));
                 }
             }
         }
     }
+    return volume_normal;
 }
 
-void LoadCTData()
+void LoadCTData(int width, int height, int depth, const char *template_filename)
 {
-    std::vector<uint16_t> ct_data(512 * 512 * 114);
-    std::vector<vec3> ct_data_normal(512 * 512 * 114);
+    std::vector<uint16_t> ct_data(width * height * depth);
     if(true) {
-        for(int i = 0; i < 114; i++) {
+        std::vector<uint16_t> rowbuffer(width);
+        for(int i = 0; i < depth; i++) {
             static char filename[512];
-            snprintf(filename, sizeof(filename), "%s/file_%03d.bin", getenv("IMAGES"), i);
+            snprintf(filename, sizeof(filename), template_filename, i);
+            // snprintf(filename, sizeof(filename), "%s/file_%03d.bin", getenv("IMAGES"), i);
             FILE *fp = fopen(filename, "rb");
             if(!fp) {
                 printf("couldn't open \"%s\" for reading\n", filename);
                 exit(EXIT_FAILURE);
             }
-            for(int row = 0; row < 512; row++) {
-                static uint16_t rowbuffer[512];
-                size_t was_read = fread(rowbuffer, 2, 512, fp);
-                if(was_read != 512) {
+            for(int row = 0; row < height; row++) {
+                size_t was_read = fread(rowbuffer.data(), 2, width, fp);
+                if(was_read != static_cast<size_t>(width)) {
                     printf("short read from \"%s\"\n", filename);
                     exit(EXIT_FAILURE);
                 }
-                for(int column = 0; column < 512; column++) {
-                    ct_data[512 * 512 * i + 512 * row + column] = rowbuffer[512 - 1 - column];
+                for(int column = 0; column < height; column++) {
+                    ct_data[width * height * i + width * row + column] = rowbuffer[width - 1 - column];
                 }
             }
             fclose(fp);
@@ -1688,9 +1695,9 @@ void LoadCTData()
                     printf("couldn't open \"%s\" for writing\n", filename);
                     exit(EXIT_FAILURE);
                 }
-                fprintf(fp, "P5 512 512 255\n");
-                for(int j = 0; j < 512 * 512; j++) {
-                    uint8_t b = ct_data[j + i * 512 * 512] % 256;
+                fprintf(fp, "P5 %d %d 255\n", width, height);
+                for(int j = 0; j < width * height; j++) {
+                    uint8_t b = ct_data[j + i * width * height] % 256;
                     fwrite(&b, 1, 1, fp);
                 }
                 fclose(fp);
@@ -1698,23 +1705,21 @@ void LoadCTData()
         }
     } else {
         // Make a sphere in the volume as a test case
-        for(int k = 0; k < 114; k++) {
-            for(int j = 0; j < 512; j++) {
-                for(int i = 0; i < 512; i++) {
-                    vec3 str { i / 512.0f, j / 512.0f, k / 114.0f };
+        for(int k = 0; k < depth; k++) {
+            for(int j = 0; j < height; j++) {
+                for(int i = 0; i < width; i++) {
+                    vec3 str { i / (float)width, j / (float)height, k / (float)depth };
                     float r = length(str - vec3(.5f, .5f, .5f));
-                    int index = i + j * 512 + k * 512 * 512;
+                    int index = i + j * width + k * width * depth;
                     ct_data[index] = (r > .5) ? 0 : 10000;
                 }
             }
         }
     }
 
-    volume = std::make_shared<Image<uint16_t>>(512, 512, 114, ct_data);
+    volume = std::make_shared<Image<uint16_t>>(width, height, depth, ct_data);
 
-    CalculateGradients(ct_data_normal);
-
-    volume_normal = std::make_shared<Image<vec3>>(512, 512, 114, ct_data_normal);
+    volume_normal = CalculateGradients(volume);
 }
 
 uint16_t threshold = 8500;
@@ -2298,7 +2303,7 @@ void MakeStubDrawable()
     light_manip = manipulator(aabox(), fov / 180.0f * 3.14159f / 2);
 
     vec3 boxmin {0, 0, 0};
-    vec3 boxmax {1,1,1}; // {512, 512, 114};
+    vec3 boxmax {1,1,1};
     volume_bounds = aabox(boxmin, boxmax);
     volume_manip = manipulator(volume_bounds, fov / 180.0f * 3.14159f / 2);
 
@@ -2314,7 +2319,6 @@ int main(int argc, char **argv)
     using namespace VulkanApp;
     
     MakeStubDrawable();
-    LoadCTData();
 
     be_verbose = (getenv("BE_NOISY") != nullptr);
     enable_validation = (getenv("VALIDATE") != nullptr);
@@ -2324,12 +2328,17 @@ int main(int argc, char **argv)
     argc--;
     while(argc > 0 && argv[0][0] == '-') {
     }
-    // if(argc != 1) {
-        // fprintf(stderr, "expected a filename\n");
-        // usage(progName);
-        // exit(EXIT_FAILURE);
-    // }
-    // const char *input_filename = argv[0];
+    if(argc != 4) {
+        fprintf(stderr, "expected dimensions and a template filename, e.g. \"512 512 114 /Users/brad/ct-data/file_%%03d.bin\"\n");
+        usage(progName);
+        exit(EXIT_FAILURE);
+    }
+    int width = atoi(argv[0]);
+    int height = atoi(argv[1]);
+    int depth = atoi(argv[2]);
+    const char *input_filename_template = argv[3];
+
+    LoadCTData(width, height, depth, input_filename_template);
 
     glfwSetErrorCallback(ErrorCallback);
 
