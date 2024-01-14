@@ -32,12 +32,88 @@
 #error Platform not supported.
 #endif
 
-static constexpr uint64_t DEFAULT_FENCE_TIMEOUT = 100000000000;
+#define STR(f) #f
 
 template <typename T>
 size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
 
-#define STR(f) #f
+template <class T>
+struct Image
+{
+private:
+    uint32_t width;
+    uint32_t height;
+    uint32_t depth;
+    std::vector<T> pixels;
+
+public:
+    Image(int width, int height, int depth, std::vector<T>& pixels) :
+        width(width),
+        height(height),
+        depth(depth),
+        pixels(std::move(pixels))
+    {}
+
+    VkFormat GetVulkanFormat() { return GetVulkanFormat<T>(); }
+    int GetWidth() { return width; }
+    int GetHeight() { return height; }
+    int GetDepth() { return height; }
+    void* GetData() { return pixels.data(); }
+    size_t GetSize() { return pixels.size(); }
+    T Sample(const vec3& uvw);
+    T FetchUnchecked(uint32_t i, uint32_t j, uint32_t k);
+};
+
+template <class T>
+T Image<T>::FetchUnchecked(uint32_t i, uint32_t j, uint32_t k)
+{
+    return pixels[i + j * width + k * width * height];
+}
+
+template <class T>
+T Image<T>::Sample(const vec3& str)
+{
+    float u = str[0] * width;
+    uint32_t i0 = std::clamp(static_cast<uint32_t>(u - .5), 0u, width - 1);
+    uint32_t i1 = std::clamp(static_cast<uint32_t>(u + .5), 0u, width - 1);
+    float a0 = (u <= .5) ? (1.0) : ((u >= width - .5) ? (0.0) : (1 - (u - .5 - i0)));
+    float a1 = 1.0f - a0;
+
+    float v = str[1] * height;
+    uint32_t j0 = std::clamp(static_cast<uint32_t>(v - .5), 0u, height - 1);
+    uint32_t j1 = std::clamp(static_cast<uint32_t>(v + .5), 0u, height - 1);
+    float b0 = (v <= .5) ? (1.0) : ((v >= height - .5) ? (0.0) : (1 - (v - .5 - j0)));
+    float b1 = 1.0f - b0;
+
+    float w = str[2] * depth;
+    uint32_t k0 = std::clamp(static_cast<uint32_t>(w - .5), 0u, depth - 1);
+    uint32_t k1 = std::clamp(static_cast<uint32_t>(w + .5), 0u, depth - 1);
+    float c0 = (w <= .5) ? (1.0) : ((w >= depth - .5) ? (0.0) : (1 - (w - .5 - k0)));
+    float c1 = 1.0f - c0;
+
+    T v000 = FetchUnchecked(i0, j0, k0);
+    T v001 = FetchUnchecked(i0, j0, k1);
+    T v010 = FetchUnchecked(i0, j1, k0);
+    T v011 = FetchUnchecked(i0, j1, k1);
+    T v100 = FetchUnchecked(i1, j0, k0);
+    T v101 = FetchUnchecked(i1, j0, k1);
+    T v110 = FetchUnchecked(i1, j1, k0);
+    T v111 = FetchUnchecked(i1, j1, k1);
+
+    T v00 = v000 * c0 + v001 * c1;
+    T v01 = v010 * c0 + v011 * c1;
+    T v10 = v100 * c0 + v101 * c1;
+    T v11 = v110 * c0 + v111 * c1;
+
+    T v0 = v00 * b0 + v01 * b1;
+    T v1 = v10 * b0 + v11 * b1;
+
+    T val = v0 * a0 + v1 * a1;
+
+    return val;
+}
+
+static constexpr uint64_t DEFAULT_FENCE_TIMEOUT = 100000000000;
 
 std::map<VkResult, std::string> MapVkResultToName =
 {
@@ -2448,8 +2524,45 @@ void MakeStubDrawable()
 
 }
 
+template <typename T>
+VkFormat GetVulkanFormat();
+
+template <>
+VkFormat GetVulkanFormat<float>()
+{
+    return VK_FORMAT_R32_SFLOAT;
+}
+
 int main(int argc, char **argv)
 {
+    std::vector<float> pixels(16 * 16);
+    for(int j = 0; j < 16; j++) {
+        for(int i = 0; i < 16; i++) {
+            float u = (i - 7.5) / 16;
+            float v = (j - 7.5) / 16;
+            if(sqrt(u * u + v * v) < .5) {
+                pixels[i + j * 16] = 1.0f;
+            } else {
+                pixels[i + j * 16] = 0.0f;
+            }
+        }
+    }
+    Image image(16, 16, 1, pixels);
+    FILE *fp = fopen("foo.ppm", "wb");
+    fprintf(fp, "P6 256 256 255\n");
+    for(int j = 0; j < 256; j++) {
+        for(int i = 0; i < 256; i++) {
+            vec3 str { i / 256.0f, j / 256.0f, 0.0f };
+            float value = image.Sample(str);
+            uint8_t c[3];
+            c[0] = static_cast<uint8_t>(255 * value);
+            c[1] = static_cast<uint8_t>(255 * value);
+            c[2] = static_cast<uint8_t>(255 * value);
+            fwrite(c, 1, 3, fp);
+        }
+    }
+    fclose(fp);
+
     using namespace VulkanApp;
     
     MakeStubDrawable();
