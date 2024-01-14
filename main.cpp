@@ -1168,8 +1168,6 @@ void CreateSwapchainData(VkPhysicalDevice physical_device, VkDevice device, VkSu
 {
     swapchain = CreateSwapchain(device, surface, swapchain_image_count, chosen_color_format, chosen_surface_format.colorSpace, swapchain_present_mode, width, height);
 
-// frame-related stuff - swapchains indices, fences, semaphores
-
     auto [depth_image, depth_image_memory] = CreateBound2DImage(physical_device, device, chosen_depth_format, width, height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     depth_image_view = CreateImageView(device, chosen_depth_format, depth_image, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
@@ -1181,25 +1179,10 @@ void CreateSwapchainData(VkPhysicalDevice physical_device, VkDevice device, VkSu
     per_swapchainimage.resize(swapchain_image_count);
     for(uint32_t i = 0; i < swapchain_image_count; i++) {
         auto& per_image = per_swapchainimage[i];
-
         per_image.image = swapchain_images[i];
         per_image.layout = VK_IMAGE_LAYOUT_UNDEFINED;
-
         per_image.image_view = CreateImageView(device, chosen_color_format, per_swapchainimage[i].image, VK_IMAGE_ASPECT_COLOR_BIT);
-
         per_image.framebuffer = CreateFramebuffer(device, {per_image.image_view, depth_image_view}, render_pass, width, height);
-        VkImageView imageviews[] = {per_image.image_view, depth_image_view};
-        VkFramebufferCreateInfo framebufferCreate {
-            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-            .flags = 0,
-            .renderPass = render_pass,
-            .attachmentCount = static_cast<uint32_t>(std::size(imageviews)),
-            .pAttachments = imageviews,
-            .width = width,
-            .height = height,
-            .layers = 1,
-        };
-        VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &per_image.framebuffer));
     }
 
     swapchainimage_semaphores.resize(swapchain_image_count);
@@ -1411,11 +1394,8 @@ void InitializeState()
     };
     VK_CHECK(vkCreateRenderPass(device, &render_pass_create, nullptr, &renderPass));
 
-    // Swapchain and per-swapchainimage stuff
-    // Creating the framebuffer requires the renderPass
     CreateSwapchainData(physical_device, device, surface, surfcaps.currentExtent.width, surfcaps.currentExtent.height, renderPass);
 
-    // Create a graphics pipeline
     VkVertexInputBindingDescription vertex_input_binding {
         .binding = 0,
         .stride = sizeof(Vertex),
@@ -1543,21 +1523,6 @@ void Cleanup()
     WaitForAllDrawsCompleted();
     drawable->ReleaseDeviceData(device);
 }
-
-struct ImageDataWrapper
-{
-    std::vector<uint8_t> &image_data;
-    int width;
-    int height;
-    ImageDataWrapper(std::vector<uint8_t> &image_data, int width, int height) :
-        image_data(image_data), width(width), height(height) 
-    {}
-    VkFormat GetVulkanFormat() { return VK_FORMAT_R8G8B8A8_UNORM; }
-    int GetWidth() { return width; }
-    int GetHeight() { return height; }
-    void* GetData() { return image_data.data(); }
-    size_t GetSize() { return width * height * 4; }
-};
 
 std::vector<uint16_t> ct_data;
 std::vector<vec3> ct_data_normal;
@@ -1692,8 +1657,10 @@ bool trace_volume(const ray& ray, vec3& color, vec3& normal)
             // enter_volume -= volume_bounds.boxmin;
             // exit_volume -= volume_bounds.boxmin;
             uint16_t density = LookupCTDensity(ray.at(t));
+            // XXX here lookup density through a table
             if(density > threshold) {
                 normal = LookupCTNormal(ray.at(t));
+                // XXX here lookup color through a table
                 if(density > 8300) {
                     color = vec3(1, 1, 1); 
                 } else {
@@ -1708,8 +1675,7 @@ bool trace_volume(const ray& ray, vec3& color, vec3& normal)
 
 void Render(uint8_t *image_data, int surfWidth, int surfHeight)
 {
-    mat4f modelview = volume_manip.m_matrix;
-    mat4f modelview_3x3 = modelview;
+    mat4f modelview_3x3 = volume_manip.m_matrix;
     modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
     mat4f modelview_normal = inverse(transpose(modelview_3x3));
 
@@ -1763,9 +1729,7 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
     // std::for_each(std::parallel_unsequenced_policy, tiles.begin(), tiles.end(), renderTile);
     std::vector<std::thread*> threads;
     for(auto const& t: tiles) {
-        auto f = [=]() {
-            renderTile(t);
-        };
+        auto f = [=](){ renderTile(t); };
         threads.push_back(new std::thread(f));
     }
     while(!threads.empty()) {
