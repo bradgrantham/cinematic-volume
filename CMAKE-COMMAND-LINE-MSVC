@@ -1,0 +1,1 @@
+cmake -G "Visual Studio 17 2022" -A x64 -Bbuild -DCMAKE_BUILD_TYPE=Debug -DGLFW3_DIR=c:/Program\ Files\ \(x86\)/GLFW/lib/cmake/glfw3 .

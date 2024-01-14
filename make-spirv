@@ -1,0 +1,2 @@
+glslangValidator -V -e main -o volume.vert volume.vert.glsl
+glslangValidator -V -e main -o volume.frag volume.frag.glsl
