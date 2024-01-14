@@ -1637,18 +1637,17 @@ std::shared_ptr<Image<vec3>> volume_normal;
 std::shared_ptr<Image<vec3>> CalculateGradients(std::shared_ptr<Image<uint16_t>> volume)
 {
     auto volume_normal = std::make_shared<Image<vec3>>(volume->GetWidth(), volume->GetHeight(), volume->GetDepth());
-    float du = 1.1f / volume->GetWidth();
-    float dv = 1.1f / volume->GetHeight();
-    float dw = 1.1f / volume->GetDepth();
+    float du = .1f / volume->GetWidth();
+    float dv = .1f / volume->GetHeight();
+    float dw = .1f / volume->GetDepth();
 
     for(int k = 0; k < volume->GetDepth(); k++) {
         for(int j = 0; j < volume->GetHeight(); j++) {
             for(int i = 0; i < volume->GetWidth(); i++) {
                 vec3 str { i * 1.0f / volume->GetWidth(), j * 1.0f / volume->GetHeight(), k * 1.0f / volume->GetDepth() };
-                float v = volume->Sample(str);
-                float gu = (volume->Sample(str + vec3(du, 0, 0)) - v) / du;
-                float gv = (volume->Sample(str + vec3(0, dv, 0)) - v) / dv;
-                float gw = (volume->Sample(str + vec3(0, 0, dw)) - v) / dw;
+                float gu = (volume->Sample(str + vec3(du, 0, 0)) - volume->Sample(str + vec3(-du, 0, 0))) / (du * 2);
+                float gv = (volume->Sample(str + vec3(0, dv, 0)) - volume->Sample(str + vec3(0, -dv, 0))) / (dv * 2);
+                float gw = (volume->Sample(str + vec3(0, 0, dw)) - volume->Sample(str + vec3(0, 0, -dw))) / (dw * 2);
                 vec3 normal {gu, gv, gw};
                 if(length(normal) > .001) {
                     volume_normal->SetPixel(i, j, k, normalize(normal));
