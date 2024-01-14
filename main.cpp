@@ -704,35 +704,9 @@ void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device,
     memcpy(staging_buffer.mapped, texture->GetData(), texture->GetSize());
     vkUnmapMemory(device, staging_buffer.mem);
 
-    VkImageCreateInfo createImageInfo {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .flags = 0,
-        .imageType = VK_IMAGE_TYPE_2D,
-        .format = texture->GetVulkanFormat(),
-        .extent{static_cast<uint32_t>(texture->GetWidth()), static_cast<uint32_t>(texture->GetHeight()), 1},
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = usage_flags,
-        .initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED,
-    };
-    VK_CHECK(vkCreateImage(device, &createImageInfo, nullptr, textureImage));
-
-    VkMemoryRequirements textureMemReqs;
-    vkGetImageMemoryRequirements(device, *textureImage, &textureMemReqs);
-
-    VkPhysicalDeviceMemoryProperties memory_properties;
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-
-    uint32_t memoryTypeIndex = GetMemoryTypeIndex(memory_properties, textureMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VkMemoryAllocateInfo textureAllocate {
-        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .allocationSize = textureMemReqs.size,
-        .memoryTypeIndex = memoryTypeIndex,
-    };
-    VK_CHECK(vkAllocateMemory(device, &textureAllocate, nullptr, textureMemory));
-    VK_CHECK(vkBindImageMemory(device, *textureImage, *textureMemory, 0));
+    auto [image, memory] = CreateBound2DImage(physical_device, device, texture->GetVulkanFormat(), static_cast<uint32_t>(texture->GetWidth()), static_cast<uint32_t>(texture->GetHeight()), usage_flags, VK_IMAGE_LAYOUT_PREINITIALIZED, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    *textureImage = image;
+    *textureMemory = memory;
 
     uint32_t transfer_queue = FindQueueFamily(physical_device, VK_QUEUE_TRANSFER_BIT);
     if(transfer_queue == NO_QUEUE_FAMILY) {
@@ -885,6 +859,40 @@ struct Drawable
     }
 };
 
+std::tuple<VkImage, VkDeviceMemory> CreateBound2DImage(VkPhysicalDevice physical_device, VkDevice device, VkFormat format, uint32_t width, uint32_t height, VkImageUsageFlags usage_flags, VkImageLayout initial_layout, VkMemoryPropertyFlags properties)
+{
+    VkImageCreateInfo create_image {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .flags = 0,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = format,
+        .extent{width, height, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = usage_flags,
+        .initialLayout = initial_layout,
+    };
+    VkImage image;
+    VK_CHECK(vkCreateImage(device, &create_image, nullptr, &image));
+
+    VkMemoryRequirements imageMemReqs;
+    vkGetImageMemoryRequirements(device, image, &imageMemReqs);
+    VkPhysicalDeviceMemoryProperties memory_properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+    uint32_t memoryTypeIndex = GetMemoryTypeIndex(memory_properties, imageMemReqs.memoryTypeBits, properties);
+    VkMemoryAllocateInfo allocate {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = imageMemReqs.size,
+        .memoryTypeIndex = memoryTypeIndex,
+    };
+    VkDeviceMemory image_memory;
+    VK_CHECK(vkAllocateMemory(device, &allocate, nullptr, &image_memory));
+    VK_CHECK(vkBindImageMemory(device, image, image_memory, 0));
+    return {image, image_memory};
+}
+
 VkSwapchainKHR CreateSwapchain(VkDevice device, VkSurfaceKHR surface, int32_t min_image_count, VkFormat chosen_color_format, VkColorSpaceKHR chosen_color_space, VkPresentModeKHR swapchain_present_mode, uint32_t width, uint32_t height)
 {
     // XXX verify present mode with vkGetPhysicalDeviceSurfacePresentModesKHR
@@ -956,6 +964,7 @@ std::vector<Submission> submissions(SUBMISSIONS_IN_FLIGHT);
 
 // per-frame stuff - swapchain image, current layout, indices, fences, semaphores
 VkSurfaceFormatKHR chosen_surface_format;
+VkPresentModeKHR swapchain_present_mode = VK_PRESENT_MODE_FIFO_KHR;
 VkFormat chosen_color_format;
 VkFormat chosen_depth_format = VK_FORMAT_D32_SFLOAT_S8_UINT;
 uint32_t swapchain_image_count = 3;
@@ -1140,38 +1149,12 @@ void DestroySwapchainData(VkDevice device)
 
 void CreateSwapchainData(VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface, uint32_t width, uint32_t height, VkRenderPass render_pass)
 {
-    VkPresentModeKHR swapchain_present_mode = VK_PRESENT_MODE_FIFO_KHR;
     swapchain = CreateSwapchain(device, surface, swapchain_image_count, chosen_color_format, chosen_surface_format.colorSpace, swapchain_present_mode, width, height);
+
 // frame-related stuff - swapchains indices, fences, semaphores
 
-    VkImageCreateInfo createDepthInfo {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .flags = 0,
-        .imageType = VK_IMAGE_TYPE_2D,
-        .format = chosen_depth_format,
-        .extent{width, height, 1},
-        .mipLevels = 1,
-        .arrayLayers = 1,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-    };
-    VK_CHECK(vkCreateImage(device, &createDepthInfo, nullptr, &depth_image));
+    auto [depth_image, depth_image_memory] = CreateBound2DImage(physical_device, device, chosen_depth_format, width, height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    VkMemoryRequirements imageMemReqs;
-    vkGetImageMemoryRequirements(device, depth_image, &imageMemReqs);
-
-    VkPhysicalDeviceMemoryProperties memory_properties;
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-
-    uint32_t memoryTypeIndex = GetMemoryTypeIndex(memory_properties, imageMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VkMemoryAllocateInfo depthAllocate {
-        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .allocationSize = imageMemReqs.size,
-        .memoryTypeIndex = memoryTypeIndex,
-    };
-    VK_CHECK(vkAllocateMemory(device, &depthAllocate, nullptr, &depth_image_memory));
-    VK_CHECK(vkBindImageMemory(device, depth_image, depth_image_memory, 0));
     depth_image_view = CreateImageView(device, chosen_depth_format, depth_image, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
 
     std::vector<VkImage> swapchain_images = GetSwapchainImages(device, swapchain);
@@ -1179,21 +1162,11 @@ void CreateSwapchainData(VkPhysicalDevice physical_device, VkDevice device, VkSu
     swapchain_image_count = static_cast<uint32_t>(swapchain_images.size());
 
     per_swapchainimage.resize(swapchain_image_count);
-    swapchainimage_semaphores.resize(swapchain_image_count);
     for(uint32_t i = 0; i < swapchain_image_count; i++) {
         auto& per_image = per_swapchainimage[i];
 
         per_image.image = swapchain_images[i];
         per_image.layout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-        // XXX create a timeline semaphore by chaining after a
-        // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
-        // VK_SEMAPHORE_TYPE_TIMELINE
-        VkSemaphoreCreateInfo sema_create {
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .flags = 0,
-        };
-        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &swapchainimage_semaphores[i]));
 
         per_image.image_view = CreateImageView(device, chosen_color_format, per_swapchainimage[i].image, VK_IMAGE_ASPECT_COLOR_BIT);
 
@@ -1209,6 +1182,19 @@ void CreateSwapchainData(VkPhysicalDevice physical_device, VkDevice device, VkSu
             .layers = 1,
         };
         VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &per_image.framebuffer));
+    }
+
+    swapchainimage_semaphores.resize(swapchain_image_count);
+    for(uint32_t i = 0; i < swapchain_image_count; i++) {
+        // XXX create a timeline semaphore by chaining after a
+        // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
+        // VK_SEMAPHORE_TYPE_TIMELINE
+        VkSemaphoreCreateInfo sema_create {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .flags = 0,
+        };
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &swapchainimage_semaphores[i]));
+
     }
 }
 
