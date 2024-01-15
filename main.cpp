@@ -26,6 +26,7 @@
 #define PLATFORM_WINDOWS
 #elif defined(__linux__)
 #define PLATFORM_LINUX
+#include <X11/Xutil.h>
 #elif defined(__APPLE__) && defined(__MACH__)
 #define PLATFORM_MACOS
 #else
@@ -403,7 +404,7 @@ VkInstance CreateInstance(bool enable_validation)
 #if defined(PLATFORM_WINDOWS)
     extension_set.insert("VK_KHR_win32_surface");
 #elif defined(PLATFORM_LINUX)
-    extension_set.insert(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+    extension_set.insert("VK_KHR_xcb_surface"); // VK_KHR_XCB_SURFACE_EXTENSION_NAME);
 #elif defined(PLATFORM_MACOS)
     // extension_set.insert(VK_MVK_MACOS_SURFACE_EXTENSION_NAME);
     extension_set.insert("VK_MVK_macos_surface");
@@ -846,10 +847,10 @@ void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device,
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask = 0,
         .dstAccessMask = 0,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .oldLayout = VK_IMAGE_LAYOUT_PREINITIALIZED,
         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = *textureImage,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
@@ -869,10 +870,10 @@ void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device,
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask = 0,
         .dstAccessMask = 0,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         .newLayout = final_layout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = *textureImage,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
@@ -908,7 +909,8 @@ public:
     size_t GetSize() { return rgba8_unorm.size(); }
 };
 
-struct Drawable
+// Can't be Drawable because that conflicts with a type name in X11
+struct DrawableShape
 {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -927,10 +929,10 @@ struct Drawable
 
     constexpr static int VERTEX_BUFFER = 0;
     constexpr static int INDEX_BUFFER = 1;
-    typedef std::array<Buffer, 2> DrawableBuffersOnDevice;
-    std::map<VkDevice, DrawableBuffersOnDevice> buffers_by_device;
+    typedef std::array<Buffer, 2> DrawableShapeBuffersOnDevice;
+    std::map<VkDevice, DrawableShapeBuffersOnDevice> buffers_by_device;
 
-    Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
+    DrawableShape(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
         float specular_color[4], float shininess, std::shared_ptr<RGBA8UNormImage> texture) :
             vertices(vertices),
             indices(indices),
@@ -1134,8 +1136,8 @@ double oldMouseY;
 float fov = 45;
 
 // geometry data
-typedef std::unique_ptr<Drawable> DrawablePtr;
-DrawablePtr drawable;
+typedef std::unique_ptr<DrawableShape> DrawableShapePtr;
+DrawableShapePtr drawable;
 
 void InitializeInstance()
 {
@@ -1874,10 +1876,10 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask = 0,
         .dstAccessMask = 0,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .oldLayout = per_image.layout,
         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = per_image.image,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
@@ -1899,10 +1901,10 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask = 0,
         .dstAccessMask = 0,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = per_image.image,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
@@ -2266,7 +2268,7 @@ void usage(const char *progName)
     fprintf(stderr, "usage: %s\n", progName);
 }
 
-void MakeStubDrawable()
+void MakeStubDrawableShape()
 {
     using namespace VulkanApp;
     std::vector<Vertex> vertices;
@@ -2296,7 +2298,7 @@ void MakeStubDrawable()
     std::vector<uint8_t> rgba8_unorm = {255, 255, 255, 255};
     auto texture = std::make_shared<RGBA8UNormImage>(width, height, rgba8_unorm);
 
-    drawable = std::make_unique<Drawable>(vertices, indices, specular_color, shininess, texture);
+    drawable = std::make_unique<DrawableShape>(vertices, indices, specular_color, shininess, texture);
 
     object_manip = manipulator(drawable->bounds, fov / 180.0f * 3.14159f / 2);
     light_manip = manipulator(aabox(), fov / 180.0f * 3.14159f / 2);
@@ -2317,7 +2319,7 @@ int main(int argc, char **argv)
 {
     using namespace VulkanApp;
     
-    MakeStubDrawable();
+    MakeStubDrawableShape();
 
     be_verbose = (getenv("BE_NOISY") != nullptr);
     enable_validation = (getenv("VALIDATE") != nullptr);

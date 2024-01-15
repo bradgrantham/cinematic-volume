@@ -27,3 +27,7 @@ if(MSVC)
 else()
   target_compile_options(volume PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers)
 endif()
+
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+target_link_libraries(volume Threads::Threads)
