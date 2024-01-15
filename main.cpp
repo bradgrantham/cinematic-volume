@@ -2116,7 +2116,7 @@ void DrawFrame(GLFWwindow *window)
     }
 }
 
-};
+}
 
 static void ErrorCallback([[maybe_unused]] int error, const char* description)
 {

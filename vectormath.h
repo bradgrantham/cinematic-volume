@@ -34,7 +34,7 @@ namespace vectormath
 
 constexpr float pi = 3.14159265358979323846f;
 
-};
+}
 
 template <class V, int D=V::vector_size>
 float dot(const V& v0, const V& v1)
