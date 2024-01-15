@@ -432,8 +432,8 @@ VkInstance CreateInstance(bool enable_validation)
 
 	VkApplicationInfo app_info {
             .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-            .pApplicationName = "vulkan-test-grantham",
-            .pEngineName = "vulkan-test-grantham",
+            .pApplicationName = "volume",
+            .pEngineName = "volume",
             .apiVersion = VK_API_VERSION_1_2,
         };
 
