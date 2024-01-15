@@ -1,4 +1,5 @@
 #include <iostream>
+#include <vector>
 
 #include "dcmtk/dcmdata/dctk.h"
 #include "dcmtk/dcmimgle/dcmimage.h"
@@ -67,7 +68,7 @@ int main(int argc, const char *argv[])
                 if(series_name.empty()) {
                     printf("\t%s\n", seriesDescription.c_str());
                 } else {
-                    if (result.good() && seriesDescription.compare(series_name) == 0) {
+                    if (result.good() && seriesDescription.compare(series_name.c_str()) == 0) {
                         std::cout << "Found " << series_name << "\n";
                         processSeries(seriesRecord);
                         // Additional code to work with the series.
