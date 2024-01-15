@@ -63,3 +63,7 @@ cmake -Bbuild -DCMAKE_BUILD_TYPE=Release .
 ```
 
 `volume` may take a while to start up; it's reading a lot of data and then calculating gradients for the volume data.
+Rotate the volume by clicking and dragging.  Zoom in on the volume by pressing 'Z' to zoom, then click and drag.  To move the volume left and right and up and down, press 'X' and then click and drag.  Press 'R' to return to rotating the volume.
+To change the isosurface threshold by 10 units up or down, press `,` or `.`.  To change 100 units, press ';' or "'".  To change 1000 units, press '[' or ']'.
+There's a hardcoded colortable with white for bone and more radiopaque tissue and red for less radiopaque tissue like blood and muscle.
+
