@@ -65,7 +65,7 @@ public:
     VkFormat GetVulkanFormat() { return GetVulkanFormat<T>(); }
     int GetWidth() { return width; }
     int GetHeight() { return height; }
-    int GetDepth() { return height; }
+    int GetDepth() { return depth; }
     void* GetData() { return pixels.data(); }
     size_t GetSize() { return pixels.size(); }
     T Sample(const vec3& str);
@@ -456,15 +456,22 @@ VkInstance CreateInstance(bool enable_validation)
     return instance;
 }
 
-VkPhysicalDevice ChoosePhysicalDevice(VkInstance instance)
+VkPhysicalDevice ChoosePhysicalDevice(VkInstance instance, uint32_t specified_gpu)
 {
     uint32_t gpu_count = 0;
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, nullptr));
+
     std::vector<VkPhysicalDevice> physical_devices(gpu_count);
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, physical_devices.data()));
 
-    return physical_devices[0];
+    if(specified_gpu >= gpu_count) {
+        fprintf(stderr, "requested device #%d but max device index is #%d.\n", specified_gpu, gpu_count);
+        exit(EXIT_FAILURE);
+    }
+
+    return physical_devices[specified_gpu];
 }
+
 
 const std::vector<std::string> DeviceTypeDescriptions = {
     "other",
@@ -1308,10 +1315,10 @@ void CreateSwapchainData(VkPhysicalDevice physical_device, VkDevice device, VkSu
     }
 }
 
-void InitializeState()
+void InitializeState(uint32_t specified_gpu)
 {
     // non-frame stuff
-    physical_device = ChoosePhysicalDevice(instance);
+    physical_device = ChoosePhysicalDevice(instance, specified_gpu);
 
     uint32_t formatCount;
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
@@ -1643,7 +1650,14 @@ std::shared_ptr<Image<vec3>> CalculateGradients(std::shared_ptr<Image<uint16_t>>
     float dv = .1f / volume->GetHeight();
     float dw = .1f / volume->GetDepth();
 
+    time_t then = time(NULL);
+
     for(int k = 0; k < volume->GetDepth(); k++) {
+        time_t now = time(NULL);
+        if(now != then) {
+            printf("slice %d...\n", k);
+            then = now;
+        }
         for(int j = 0; j < volume->GetHeight(); j++) {
             for(int i = 0; i < volume->GetWidth(); i++) {
                 vec3 str { i * 1.0f / volume->GetWidth(), j * 1.0f / volume->GetHeight(), k * 1.0f / volume->GetDepth() };
@@ -1667,7 +1681,13 @@ void LoadCTData(int width, int height, int depth, const char *template_filename)
     std::vector<uint16_t> ct_data(width * height * depth);
     if(true) {
         std::vector<uint16_t> rowbuffer(width);
+        time_t then = time(NULL);
         for(int i = 0; i < depth; i++) {
+            time_t now = time(NULL);
+            if(now > then) {
+                then = now;
+                printf("loading layer %d\n", i);
+            }
             static char filename[512];
             snprintf(filename, sizeof(filename), template_filename, i);
             // snprintf(filename, sizeof(filename), "%s/file_%03d.bin", getenv("IMAGES"), i);
@@ -1720,6 +1740,7 @@ void LoadCTData(int width, int height, int depth, const char *template_filename)
 
     volume = std::make_shared<Image<uint16_t>>(width, height, depth, ct_data);
 
+    printf("calculating gradients...\n");
     volume_normal = CalculateGradients(volume);
 }
 
@@ -2317,6 +2338,8 @@ void MakeStubDrawableShape()
 
 int main(int argc, char **argv)
 {
+    uint32_t specified_gpu = 0;
+
     using namespace VulkanApp;
     
     MakeStubDrawableShape();
@@ -2328,6 +2351,20 @@ int main(int argc, char **argv)
     argv++;
     argc--;
     while(argc > 0 && argv[0][0] == '-') {
+        if(strcmp(argv[0], "--gpu") == 0) {
+            if(argc < 2) {
+                usage(progName);
+                printf("--gpu requires a GPU index (e.g. \"--gpu 1\")\n");
+                exit(EXIT_FAILURE);
+            }
+            specified_gpu = atoi(argv[1]);
+            argv += 2;
+            argc -= 2;
+        } else {
+            usage(progName);
+            printf("unknown option \"%s\"\n", argv[0]);
+            exit(EXIT_FAILURE);
+        }
     }
     if(argc != 4) {
         fprintf(stderr, "expected dimensions and a template filename, e.g. \"512 512 114 /Users/brad/ct-data/file_%%03d.bin\"\n");
@@ -2364,7 +2401,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    VulkanApp::InitializeState();
+    VulkanApp::InitializeState(specified_gpu);
 
     glfwSetKeyCallback(window, KeyCallback);
     glfwSetMouseButtonCallback(window, ButtonCallback);
