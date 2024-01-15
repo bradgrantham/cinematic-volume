@@ -6,7 +6,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules)
 
 find_package(Vulkan REQUIRED)
 
-find_package(GLFW3 3.3 CONFIG REQUIRED)
+find_package(glfw3 3.3 CONFIG REQUIRED)
 
 if(NOT Vulkan_FOUND)
     message(
