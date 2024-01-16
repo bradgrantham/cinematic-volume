@@ -161,13 +161,13 @@ std::map<VkResult, std::string> MapVkResultToName =
 
 #define VK_CHECK(f) \
 { \
-    VkResult result = (f); \
+    VkResult result_ = (f); \
     static const std::set<VkResult> okay{VK_SUCCESS, VK_SUBOPTIMAL_KHR, VK_THREAD_IDLE_KHR, VK_THREAD_DONE_KHR, VK_OPERATION_DEFERRED_KHR, VK_OPERATION_NOT_DEFERRED_KHR}; \
-    if(!okay.contains(result)) { \
+    if(!okay.contains(result_)) { \
 	if(MapVkResultToName.count(f) > 0) { \
-	    std::cerr << "VkResult from " STR(f) " was " << MapVkResultToName[result] << " at line " << __LINE__ << "\n"; \
+	    std::cerr << "VkResult from " STR(f) " was " << MapVkResultToName[result_] << " at line " << __LINE__ << "\n"; \
 	} else { \
-	    std::cerr << "VkResult from " STR(f) " was " << result << " at line " << __LINE__ << "\n"; \
+	    std::cerr << "VkResult from " STR(f) " was " << result_ << " at line " << __LINE__ << "\n"; \
         } \
 	exit(EXIT_FAILURE); \
     } \
@@ -401,13 +401,7 @@ VkInstance CreateInstance(bool enable_validation)
 
     extension_set.insert(VK_KHR_SURFACE_EXTENSION_NAME);
 
-#if defined(PLATFORM_WINDOWS)
-    extension_set.insert("VK_KHR_win32_surface");
-#elif defined(PLATFORM_LINUX)
-    extension_set.insert("VK_KHR_xcb_surface"); // VK_KHR_XCB_SURFACE_EXTENSION_NAME);
-#elif defined(PLATFORM_MACOS)
-    // extension_set.insert(VK_MVK_MACOS_SURFACE_EXTENSION_NAME);
-    extension_set.insert("VK_MVK_macos_surface");
+#if defined(PLATFORM_MACOS)
     extension_set.insert(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
 #endif
 
@@ -1113,11 +1107,12 @@ std::vector<VkSemaphore> swapchainimage_semaphores;
 VkImage depth_image;
 VkDeviceMemory depth_image_memory;
 VkImageView depth_image_view;
+uint32_t swapchain_width, swapchain_height;
 
 // rendering stuff - pipelines, binding & drawing commands
 VkPipelineLayout pipeline_layout;
 VkDescriptorPool descriptor_pool;
-VkRenderPass renderPass;
+VkRenderPass render_pass;
 VkPipeline pipeline;
 VkDescriptorSetLayout descriptor_set_layout;
 
@@ -1250,7 +1245,7 @@ void WaitForAllDrawsCompleted()
     }
 }
 
-void DestroySwapchainData(VkDevice device)
+void DestroySwapchainData()
 {
     WaitForAllDrawsCompleted();
 
@@ -1280,11 +1275,18 @@ void DestroySwapchainData(VkDevice device)
     swapchain = VK_NULL_HANDLE;
 }
 
-void CreateSwapchainData(VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface, uint32_t width, uint32_t height, VkRenderPass render_pass)
+void CreateSwapchainData(/*VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface, VkRenderPass render_pass */)
 {
+    VkSurfaceCapabilitiesKHR surfcaps;
+    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
+    uint32_t width = surfcaps.currentExtent.width;
+    uint32_t height = surfcaps.currentExtent.height;
     swapchain = CreateSwapchain(device, surface, swapchain_image_count, chosen_color_format, chosen_surface_format.colorSpace, swapchain_present_mode, width, height);
 
     auto [depth_image, depth_image_memory] = CreateBound2DImage(physical_device, device, chosen_depth_format, width, height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    swapchain_width = width;
+    swapchain_height = height;
 
     depth_image_view = CreateImageView(device, chosen_depth_format, depth_image, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
 
@@ -1414,7 +1416,7 @@ void InitializeState(uint32_t specified_gpu)
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = 0,
         .maxSets = SUBMISSIONS_IN_FLIGHT,
-        .poolSizeCount = std::size(pool_sizes),
+        .poolSizeCount = static_cast<uint32_t>(std::size(pool_sizes)),
         .pPoolSizes = pool_sizes,
     };
     VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &descriptor_pool));
@@ -1508,9 +1510,11 @@ void InitializeState(uint32_t specified_gpu)
         .dependencyCount = static_cast<uint32_t>(std::size(attachment_dependencies)),
         .pDependencies = attachment_dependencies,
     };
-    VK_CHECK(vkCreateRenderPass(device, &render_pass_create, nullptr, &renderPass));
+    VK_CHECK(vkCreateRenderPass(device, &render_pass_create, nullptr, &render_pass));
 
-    CreateSwapchainData(physical_device, device, surface, surfcaps.currentExtent.width, surfcaps.currentExtent.height, renderPass);
+    // Swapchain and per-swapchainimage stuff
+    // Creating the framebuffer requires the renderPass
+    CreateSwapchainData(/*physical_device, device, surface*/);
 
     VkVertexInputBindingDescription vertex_input_binding {
         .binding = 0,
@@ -1628,7 +1632,7 @@ void InitializeState(uint32_t specified_gpu)
         .pColorBlendState = &color_blend_state,
         .pDynamicState = &dynamicState,
         .layout = pipeline_layout,
-        .renderPass = renderPass,
+        .renderPass = render_pass,
     };
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &pipeline));
@@ -1750,6 +1754,7 @@ bool trace_volume(const ray& ray, vec3& color, vec3& normal)
 {
     range ray_range{0, std::numeric_limits<float>::max()};
     range rn = ray_range.intersect(ray_intersect_box(volume_bounds, ray));
+    vec3 attenuation {1.0f, 1.0f, 1.0f};
     if(rn) {
         // vec3 enter_volume = ray.at(rn.t0);
         // vec3 exit_volume = ray.at(rn.t1);
@@ -1766,11 +1771,17 @@ bool trace_volume(const ray& ray, vec3& color, vec3& normal)
 
                 // XXX here lookup color through a table
                 if(density > 8300) {
-                    color = vec3(1, 1, 1); 
+                    color = attenuation * vec3(1, 1, 1); 
                 } else {
-                    color = vec3(.8f, .2f, .2f); 
+                    color = attenuation * vec3(.8f, .2f, .2f); 
                 }
                 return true;
+            } else if(density > threshold - 100) {
+                if(density > 8300) {
+                    attenuation *= vec3(.99, .99, .99);
+                } else {
+                    attenuation *= vec3(.99, .9, .9);
+                }
             }
         }
     }
@@ -1874,8 +1885,8 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     uint32_t swapchain_index;
     while((result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, swapchainimage_semaphores[swapchainimage_semaphore_index], VK_NULL_HANDLE, &swapchain_index)) != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            DestroySwapchainData(device);
-            CreateSwapchainData(physical_device, device, surface, surfWidth, surfHeight, renderPass);
+            DestroySwapchainData();
+            CreateSwapchainData(/*physical_device, device, surface, render_pass */);
         } else {
 	    std::cerr << "VkResult from vkAcquireNextImageKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
@@ -1960,8 +1971,8 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     result = vkQueuePresentKHR(queue, &present);
     if(result != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            DestroySwapchainData(device);
-            CreateSwapchainData(physical_device, device, surface, surfWidth, surfHeight, renderPass);
+            DestroySwapchainData();
+            CreateSwapchainData(/* physical_device, device, surface, render_pass */);
         } else {
 	    std::cerr << "VkResult from vkQueuePresentKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
@@ -1982,9 +1993,6 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
 
 void DrawFrameVulkan([[maybe_unused]] GLFWwindow *window)
 {
-    VkSurfaceCapabilitiesKHR surfcaps;
-    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
-
     auto& submission = submissions[submission_index];
 
     if(submission.draw_completed_fence_submitted) {
@@ -2002,7 +2010,7 @@ void DrawFrameVulkan([[maybe_unused]] GLFWwindow *window)
     float farClip = 1000.0; // XXX - gSceneManip->m_translation[2] + gSceneManip->m_reference_size;
     float frustumTop = tan(fov / 180.0f * 3.14159f / 2) * nearClip;
     float frustumBottom = -frustumTop;
-    float frustumRight = frustumTop * surfcaps.currentExtent.width / surfcaps.currentExtent.height;
+    float frustumRight = frustumTop * swapchain_width / swapchain_height;
     float frustumLeft = -frustumRight;
     mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip);
 
@@ -2030,8 +2038,8 @@ void DrawFrameVulkan([[maybe_unused]] GLFWwindow *window)
     uint32_t swapchain_index;
     while((result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, swapchainimage_semaphores[swapchainimage_semaphore_index], VK_NULL_HANDLE, &swapchain_index)) != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            DestroySwapchainData(device);
-            CreateSwapchainData(physical_device, device, surface, surfcaps.currentExtent.width, surfcaps.currentExtent.height, renderPass);
+            DestroySwapchainData();
+            CreateSwapchainData(/*physical_device, device, surface, renderpass */);
         } else {
 	    std::cerr << "VkResult from vkAcquireNextImageKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
@@ -2054,9 +2062,9 @@ void DrawFrameVulkan([[maybe_unused]] GLFWwindow *window)
     };
     VkRenderPassBeginInfo beginRenderpass {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .renderPass = renderPass,
+        .renderPass = render_pass,
         .framebuffer = per_image.framebuffer,
-        .renderArea = {{0, 0}, {surfcaps.currentExtent.width, surfcaps.currentExtent.height}},
+        .renderArea = {{0, 0}, {swapchain_width, swapchain_height}},
         .clearValueCount = static_cast<uint32_t>(std::size(clearValues)),
         .pClearValues = clearValues,
     };
@@ -2071,8 +2079,8 @@ void DrawFrameVulkan([[maybe_unused]] GLFWwindow *window)
     VkViewport viewport {
         .x = 0,
         .y = 0,
-        .width = (float)surfcaps.currentExtent.width,
-        .height = (float)surfcaps.currentExtent.height,
+        .width = (float)swapchain_width,
+        .height = (float)swapchain_height,
         .minDepth = 0.0f,
         .maxDepth = 1.0f,
     };
@@ -2080,7 +2088,7 @@ void DrawFrameVulkan([[maybe_unused]] GLFWwindow *window)
 
     VkRect2D scissor {
         .offset{0, 0},
-        .extent{surfcaps.currentExtent.width, surfcaps.currentExtent.height}};
+        .extent{swapchain_width, swapchain_height}};
     vkCmdSetScissor(cb, 0, 1, &scissor);
 
     drawable->BindForDraw(device, cb);
@@ -2116,8 +2124,8 @@ void DrawFrameVulkan([[maybe_unused]] GLFWwindow *window)
     result = vkQueuePresentKHR(queue, &present);
     if(result != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            DestroySwapchainData(device);
-            CreateSwapchainData(physical_device, device, surface, surfcaps.currentExtent.width, surfcaps.currentExtent.height, renderPass);
+            DestroySwapchainData();
+            CreateSwapchainData(/*physical_device, device, surface, renderpass */);
         } else {
 	    std::cerr << "VkResult from vkQueuePresentKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
