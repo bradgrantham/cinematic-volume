@@ -38,6 +38,23 @@
 template <typename T>
 size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
 
+// Had a nice template function call with no params here but MSVC squawked...
+
+VkFormat GetVulkanFormat(float)
+{
+    return VK_FORMAT_R32_SFLOAT;
+}
+
+VkFormat GetVulkanFormat(uint16_t)
+{
+    return VK_FORMAT_R16_UNORM;
+}
+
+VkFormat GetVulkanFormat(vec3)
+{
+    return VK_FORMAT_R32G32B32_SFLOAT;
+}
+
 template <class T>
 struct Image
 {
@@ -62,7 +79,7 @@ public:
         pixels(width * height * depth)
     {}
 
-    VkFormat GetVulkanFormat() { return GetVulkanFormat<T>(); }
+    VkFormat GetVulkanFormat() { return GetVulkanFormat(pixels[0]); }
     int GetWidth() { return width; }
     int GetHeight() { return height; }
     int GetDepth() { return depth; }
@@ -87,19 +104,19 @@ T Image<T>::Sample(const vec3& str)
     float u = str[0] * width;
     uint32_t i0 = std::clamp(static_cast<uint32_t>(u - .5), 0u, width - 1);
     uint32_t i1 = std::clamp(static_cast<uint32_t>(u + .5), 0u, width - 1);
-    float a0 = (u <= .5) ? (1.0) : ((u >= width - .5) ? (0.0) : (1 - (u - .5 - i0)));
+    float a0 = (u <= .5f) ? (1.0f) : ((u >= width - .5f) ? (0.0f) : (1.0f - (u - .5f - i0)));
     float a1 = 1.0f - a0;
 
     float v = str[1] * height;
     uint32_t j0 = std::clamp(static_cast<uint32_t>(v - .5), 0u, height - 1);
     uint32_t j1 = std::clamp(static_cast<uint32_t>(v + .5), 0u, height - 1);
-    float b0 = (v <= .5) ? (1.0) : ((v >= height - .5) ? (0.0) : (1 - (v - .5 - j0)));
+    float b0 = (v <= .5f) ? (1.0f) : ((v >= height - .5f) ? (0.0f) : (1.0f - (v - .5f - j0)));
     float b1 = 1.0f - b0;
 
     float w = str[2] * depth;
     uint32_t k0 = std::clamp(static_cast<uint32_t>(w - .5), 0u, depth - 1);
     uint32_t k1 = std::clamp(static_cast<uint32_t>(w + .5), 0u, depth - 1);
-    float c0 = (w <= .5) ? (1.0) : ((w >= depth - .5) ? (0.0) : (1 - (w - .5 - k0)));
+    float c0 = (w <= .5f) ? (1.0f) : ((w >= depth - .5f) ? (0.0f) : (1.0f - (w - .5f - k0)));
     float c1 = 1.0f - c0;
 
     T v000 = FetchUnchecked(i0, j0, k0);
@@ -111,38 +128,17 @@ T Image<T>::Sample(const vec3& str)
     T v110 = FetchUnchecked(i1, j1, k0);
     T v111 = FetchUnchecked(i1, j1, k1);
 
-    T v00 = v000 * c0 + v001 * c1;
-    T v01 = v010 * c0 + v011 * c1;
-    T v10 = v100 * c0 + v101 * c1;
-    T v11 = v110 * c0 + v111 * c1;
+    T v00 = static_cast<T>(v000 * c0 + v001 * c1);
+    T v01 = static_cast<T>(v010 * c0 + v011 * c1);
+    T v10 = static_cast<T>(v100 * c0 + v101 * c1);
+    T v11 = static_cast<T>(v110 * c0 + v111 * c1);
 
-    T v0 = v00 * b0 + v01 * b1;
-    T v1 = v10 * b0 + v11 * b1;
+    T v0 = static_cast<T>(v00 * b0 + v01 * b1);
+    T v1 = static_cast<T>(v10 * b0 + v11 * b1);
 
-    T val = v0 * a0 + v1 * a1;
+    T val = static_cast<T>(v0 * a0 + v1 * a1);
 
     return val;
-}
-
-template <typename T>
-VkFormat GetVulkanFormat();
-
-template <>
-VkFormat GetVulkanFormat<float>()
-{
-    return VK_FORMAT_R32_SFLOAT;
-}
-
-template <>
-VkFormat GetVulkanFormat<uint16_t>()
-{
-    return VK_FORMAT_R16_UNORM;
-}
-
-template <>
-VkFormat GetVulkanFormat<vec3>()
-{
-    return VK_FORMAT_R32G32B32_SFLOAT;
 }
 
 static constexpr uint64_t DEFAULT_FENCE_TIMEOUT = 100000000000;
@@ -1245,7 +1241,7 @@ void WaitForAllDrawsCompleted()
     }
 }
 
-void DestroySwapchainData()
+void DestroySwapchainData(/* VkDevice device */)
 {
     WaitForAllDrawsCompleted();
 
@@ -1275,15 +1271,16 @@ void DestroySwapchainData()
     swapchain = VK_NULL_HANDLE;
 }
 
-void CreateSwapchainData(/*VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface, VkRenderPass render_pass */)
+void CreateSwapchainData(/* VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface, VkRenderPass render_pass */)
 {
     VkSurfaceCapabilitiesKHR surfcaps;
     VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
     uint32_t width = surfcaps.currentExtent.width;
     uint32_t height = surfcaps.currentExtent.height;
+
     swapchain = CreateSwapchain(device, surface, swapchain_image_count, chosen_color_format, chosen_surface_format.colorSpace, swapchain_present_mode, width, height);
 
-    auto [depth_image, depth_image_memory] = CreateBound2DImage(physical_device, device, chosen_depth_format, width, height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    std::tie(depth_image, depth_image_memory) = CreateBound2DImage(physical_device, device, chosen_depth_format, width, height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     swapchain_width = width;
     swapchain_height = height;
@@ -1514,7 +1511,7 @@ void InitializeState(uint32_t specified_gpu)
 
     // Swapchain and per-swapchainimage stuff
     // Creating the framebuffer requires the renderPass
-    CreateSwapchainData(/*physical_device, device, surface*/);
+    CreateSwapchainData(/* physical_device, device, surface, render_pass */);
 
     VkVertexInputBindingDescription vertex_input_binding {
         .binding = 0,
@@ -1644,9 +1641,6 @@ void Cleanup()
     drawable->ReleaseDeviceData(device);
 }
 
-std::shared_ptr<Image<uint16_t>> volume;
-std::shared_ptr<Image<vec3>> volume_normal;
-
 std::shared_ptr<Image<vec3>> CalculateGradients(std::shared_ptr<Image<uint16_t>> volume)
 {
     auto volume_normal = std::make_shared<Image<vec3>>(volume->GetWidth(), volume->GetHeight(), volume->GetDepth());
@@ -1679,6 +1673,9 @@ std::shared_ptr<Image<vec3>> CalculateGradients(std::shared_ptr<Image<uint16_t>>
     }
     return volume_normal;
 }
+
+std::shared_ptr<Image<uint16_t>> volume;
+std::shared_ptr<Image<vec3>> volume_normal;
 
 void LoadCTData(int width, int height, int depth, const char *template_filename)
 {
@@ -1778,9 +1775,9 @@ bool trace_volume(const ray& ray, vec3& color, vec3& normal)
                 return true;
             } else if(density > threshold - 100) {
                 if(density > 8300) {
-                    attenuation *= vec3(.99, .99, .99);
+                    attenuation *= vec3(.99f, .99f, .99f);
                 } else {
-                    attenuation *= vec3(.99, .9, .9);
+                    attenuation *= vec3(.99f, .9f, .9f);
                 }
             }
         }
@@ -1834,9 +1831,9 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
                 }
 
                 int index = (x + y * surfWidth) * 4;
-                image_data[index + 2] = 255 * std::clamp(color[0], 0.0f, 1.0f);
-                image_data[index + 1] = 255 * std::clamp(color[1], 0.0f, 1.0f);
-                image_data[index + 0] = 255 * std::clamp(color[2], 0.0f, 1.0f);
+                image_data[index + 2] = static_cast<uint8_t>(255 * std::clamp(color[0], 0.0f, 1.0f));
+                image_data[index + 1] = static_cast<uint8_t>(255 * std::clamp(color[1], 0.0f, 1.0f));
+                image_data[index + 0] = static_cast<uint8_t>(255 * std::clamp(color[2], 0.0f, 1.0f));
             }
         }
     };
@@ -1857,14 +1854,9 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
 
 void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
 {
-    VkSurfaceCapabilitiesKHR surfcaps;
-    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
-    int32_t surfWidth = surfcaps.currentExtent.width;
-    int32_t surfHeight = surfcaps.currentExtent.height;
-
     static Buffer staging_buffer;
     static size_t previous_size = 0;
-    size_t image_size = surfWidth * surfHeight * 4;
+    size_t image_size = swapchain_width * swapchain_height * 4;
     if(image_size > previous_size) {
         staging_buffer.Create(physical_device, device, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, image_size, 0, &staging_buffer.mapped));
@@ -1872,7 +1864,7 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     }
 
     uint8_t* image_data = static_cast<uint8_t*>(staging_buffer.mapped);
-    Render(image_data, surfWidth, surfHeight);
+    Render(image_data, swapchain_width, swapchain_height);
     auto& submission = submissions[submission_index];
 
     if(submission.draw_completed_fence_submitted) {
@@ -1885,8 +1877,8 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     uint32_t swapchain_index;
     while((result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, swapchainimage_semaphores[swapchainimage_semaphore_index], VK_NULL_HANDLE, &swapchain_index)) != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            DestroySwapchainData();
-            CreateSwapchainData(/*physical_device, device, surface, render_pass */);
+            DestroySwapchainData(/* device */);
+            CreateSwapchainData(/* physical_device, device, surface, renderPass */);
         } else {
 	    std::cerr << "VkResult from vkAcquireNextImageKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
@@ -1924,7 +1916,7 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         .bufferImageHeight = 0, // static_cast<uint32_t>(surfHeight),
         .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
         .imageOffset = {0, 0, 0},
-        .imageExtent = {static_cast<uint32_t>(surfWidth), static_cast<uint32_t>(surfHeight), 1},
+        .imageExtent = {static_cast<uint32_t>(swapchain_width), static_cast<uint32_t>(swapchain_height), 1},
     };
 
     vkCmdCopyBufferToImage(cb, staging_buffer.buf, per_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
@@ -1971,17 +1963,19 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     result = vkQueuePresentKHR(queue, &present);
     if(result != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            DestroySwapchainData();
-            CreateSwapchainData(/* physical_device, device, surface, render_pass */);
+            DestroySwapchainData(/* device */);
+            CreateSwapchainData(/* physical_device, device, surface, renderPass */);
         } else {
 	    std::cerr << "VkResult from vkQueuePresentKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
         }
     }
 
-    VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-    VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
-    submission.draw_completed_fence_submitted = false;
+    if (submission.draw_completed_fence_submitted) {
+        VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+        VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
+        submission.draw_completed_fence_submitted = false;
+    }
 
     per_image.layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
@@ -2038,8 +2032,8 @@ void DrawFrameVulkan([[maybe_unused]] GLFWwindow *window)
     uint32_t swapchain_index;
     while((result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, swapchainimage_semaphores[swapchainimage_semaphore_index], VK_NULL_HANDLE, &swapchain_index)) != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            DestroySwapchainData();
-            CreateSwapchainData(/*physical_device, device, surface, renderpass */);
+            DestroySwapchainData(/* device */);
+            CreateSwapchainData(/* physical_device, device, surface, renderPass */);
         } else {
 	    std::cerr << "VkResult from vkAcquireNextImageKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
@@ -2124,8 +2118,8 @@ void DrawFrameVulkan([[maybe_unused]] GLFWwindow *window)
     result = vkQueuePresentKHR(queue, &present);
     if(result != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            DestroySwapchainData();
-            CreateSwapchainData(/*physical_device, device, surface, renderpass */);
+            DestroySwapchainData(/* device */);
+            CreateSwapchainData(/* physical_device, device, surface, renderPass */);
         } else {
 	    std::cerr << "VkResult from vkQueuePresentKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
@@ -2347,6 +2341,10 @@ void MakeStubDrawableShape()
 int main(int argc, char **argv)
 {
     uint32_t specified_gpu = 0;
+
+#ifdef PLATFORM_WINDOWS
+    setvbuf(stdout, NULL, _IONBF, 0);
+#endif
 
     using namespace VulkanApp;
     
