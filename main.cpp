@@ -141,6 +141,27 @@ T Image<T>::Sample(const vec3& str)
     return val;
 }
 
+template <typename T>
+VkFormat GetVulkanFormat();
+
+template <>
+VkFormat GetVulkanFormat<float>()
+{
+    return VK_FORMAT_R32_SFLOAT;
+}
+
+template <>
+VkFormat GetVulkanFormat<int16_t>()
+{
+    return VK_FORMAT_R16_UNORM;
+}
+
+template <>
+VkFormat GetVulkanFormat<vec3>()
+{
+    return VK_FORMAT_R32G32B32_SFLOAT;
+}
+
 static constexpr uint64_t DEFAULT_FENCE_TIMEOUT = 100000000000;
 
 std::map<VkResult, std::string> MapVkResultToName =
@@ -1641,7 +1662,10 @@ void Cleanup()
     drawable->ReleaseDeviceData(device);
 }
 
-std::shared_ptr<Image<vec3>> CalculateGradients(std::shared_ptr<Image<uint16_t>> volume)
+std::shared_ptr<Image<int16_t>> volume;
+std::shared_ptr<Image<vec3>> volume_normal;
+
+std::shared_ptr<Image<vec3>> CalculateGradients(std::shared_ptr<Image<int16_t>> volume)
 {
     auto volume_normal = std::make_shared<Image<vec3>>(volume->GetWidth(), volume->GetHeight(), volume->GetDepth());
     float du = .1f / volume->GetWidth();
@@ -1674,12 +1698,9 @@ std::shared_ptr<Image<vec3>> CalculateGradients(std::shared_ptr<Image<uint16_t>>
     return volume_normal;
 }
 
-std::shared_ptr<Image<uint16_t>> volume;
-std::shared_ptr<Image<vec3>> volume_normal;
-
-void LoadCTData(int width, int height, int depth, const char *template_filename)
+void LoadCTData(int width, int height, int depth, const char *template_filename, float slope, int intercept)
 {
-    std::vector<uint16_t> ct_data(width * height * depth);
+    std::vector<int16_t> ct_data(width * height * depth);
     if(true) {
         std::vector<uint16_t> rowbuffer(width);
         time_t then = time(NULL);
@@ -1704,7 +1725,7 @@ void LoadCTData(int width, int height, int depth, const char *template_filename)
                     exit(EXIT_FAILURE);
                 }
                 for(int column = 0; column < height; column++) {
-                    ct_data[width * height * i + width * row + column] = rowbuffer[width - 1 - column];
+                    ct_data[width * height * i + width * row + column] = static_cast<int16_t>(rowbuffer[width - 1 - column] * slope + intercept);
                 }
             }
             fclose(fp);
@@ -1739,15 +1760,15 @@ void LoadCTData(int width, int height, int depth, const char *template_filename)
         }
     }
 
-    volume = std::make_shared<Image<uint16_t>>(width, height, depth, ct_data);
+    volume = std::make_shared<Image<int16_t>>(width, height, depth, ct_data);
 
     printf("calculating gradients...\n");
     volume_normal = CalculateGradients(volume);
 }
 
-uint16_t threshold = 8500;
+int16_t threshold = 300;
 
-bool trace_volume(const ray& ray, vec3& color, vec3& normal)
+bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
 {
     range ray_range{0, std::numeric_limits<float>::max()};
     range rn = ray_range.intersect(ray_intersect_box(volume_bounds, ray));
@@ -1760,21 +1781,21 @@ bool trace_volume(const ray& ray, vec3& color, vec3& normal)
             // enter_volume -= volume_bounds.boxmin;
             // exit_volume -= volume_bounds.boxmin;
 
-            uint16_t density = volume->Sample(ray.at(t));
+            int16_t density = volume->Sample(ray.at(t));
             // XXX here lookup density through a table
 
             if(density > threshold) {
                 normal = volume_normal->Sample(ray.at(t));
 
                 // XXX here lookup color through a table
-                if(density > 8300) {
+                if(density > 100) {
                     color = attenuation * vec3(1, 1, 1); 
                 } else {
                     color = attenuation * vec3(.8f, .2f, .2f); 
                 }
                 return true;
             } else if(density > threshold - 100) {
-                if(density > 8300) {
+                if(density > 100) {
                     attenuation *= vec3(.99f, .99f, .99f);
                 } else {
                     attenuation *= vec3(.99f, .9f, .9f);
@@ -1818,7 +1839,7 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
 
                 vec3 surface_color;
                 vec3 surface_normal;
-                bool hit = trace_volume(object_ray, surface_color, surface_normal);
+                bool hit = TraceVolume(object_ray, surface_color, surface_normal);
                 vec3 normal = surface_normal * modelview_normal;
 
                 vec3 color;
@@ -2372,8 +2393,8 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
     }
-    if(argc != 4) {
-        fprintf(stderr, "expected dimensions and a template filename, e.g. \"512 512 114 /Users/brad/ct-data/file_%%03d.bin\"\n");
+    if(argc != 6) {
+        fprintf(stderr, "expected dimensions, template filename, slope, and intercept, e.g. \"512 512 114 /Users/brad/ct-data/file_%%03d.bin\" 1 -8192\n");
         usage(progName);
         exit(EXIT_FAILURE);
     }
@@ -2381,8 +2402,10 @@ int main(int argc, char **argv)
     int height = atoi(argv[1]);
     int depth = atoi(argv[2]);
     const char *input_filename_template = argv[3];
+    float slope = atof(argv[4]);
+    int intercept = atoi(argv[5]);
 
-    LoadCTData(width, height, depth, input_filename_template);
+    LoadCTData(width, height, depth, input_filename_template, slope, intercept);
 
     glfwSetErrorCallback(ErrorCallback);
 

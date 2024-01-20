@@ -40,12 +40,13 @@ make ct-view
 ```
 
 * When this script is complete, there will be a series of raw 16-bit data files like `file_000.bin`, `file_001.bin`, etc.
-  * Take note of the dimensions printed for every slice (e.g. `512 by 512`).  They should be the same and should be relatively large.  Write them down.  This is the last one of mine:
+  * Take note of the dimensions printed for every slice (e.g. `512 by 512`) and the slope and intercept.  They should be the same.  If you have selected the correct and should be relatively large.  Write them down.  This is the last one of mine:
 
 
 ```
 extracting binary data file_113.bin from DICOM file 125...
 512 by 512
+slope 1.000000, intercept -8192
 ```
 
 * Build `volume`.  It requires `GLFW3` and Vulkan and `cmake` to build:
@@ -56,10 +57,10 @@ cmake -Bbuild -DCMAKE_BUILD_TYPE=Release .
 (cd build ; make)
 ```
 
-* Run `volume`, providing the dimensions of the slices and the number of slices, and a `printf`-style string for the binary filenames:
+* Run `volume`, providing the dimensions of the slices and the number of slices, and a `printf`-style string for the binary filenames, then the slope and intercept.
 
 ```
-./build/volume 512 512 114 helpers/file_%03d.bin
+./build/volume 512 512 114 helpers/file_%03d.bin 1.0 -8192
 ```
 
 `volume` may take a while to start up; it's reading a lot of data and then calculating gradients for the volume data.
