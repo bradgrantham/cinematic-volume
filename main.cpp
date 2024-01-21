@@ -1860,6 +1860,7 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
                 }
 
                 int index = (x + y * surfWidth) * 4;
+                // XXX is this hardcoding BGR?  I thought MVK would give me RGB...
                 image_data[index + 2] = static_cast<uint8_t>(255 * std::clamp(color[0], 0.0f, 1.0f));
                 image_data[index + 1] = static_cast<uint8_t>(255 * std::clamp(color[1], 0.0f, 1.0f));
                 image_data[index + 0] = static_cast<uint8_t>(255 * std::clamp(color[2], 0.0f, 1.0f));
@@ -1880,6 +1881,9 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
         delete thread;
     }
 }
+
+uint32_t fixed_res_width = 512;
+uint32_t fixed_res_height = 512;
 
 void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
 {
@@ -1915,7 +1919,29 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         previous_size = image_size;
     }
     uint8_t* image_data = static_cast<uint8_t*>(staging_buffer.mapped);
-    Render(image_data, swapchain_width, swapchain_height);
+
+    if(false) {
+
+        Render(image_data, swapchain_width, swapchain_height);
+
+    } else {
+
+        static std::vector<uint8_t> fixed_res_image;
+        if(fixed_res_image.size() < (fixed_res_width * fixed_res_height * 4)) {
+            fixed_res_image.resize(fixed_res_width * fixed_res_height * 4);
+        }
+        Render(fixed_res_image.data(), fixed_res_width, fixed_res_height);
+        for(uint32_t y = 0; y < swapchain_height; y++) {
+            for(uint32_t x = 0; x < swapchain_width; x++) {
+                int source_x = x * fixed_res_width / swapchain_width;
+                int source_y = y * fixed_res_height / swapchain_height;
+                image_data[0 + (x + y * swapchain_width) * 4] = fixed_res_image[0 + (source_x + source_y * fixed_res_width) * 4];
+                image_data[1 + (x + y * swapchain_width) * 4] = fixed_res_image[1 + (source_x + source_y * fixed_res_width) * 4];
+                image_data[2 + (x + y * swapchain_width) * 4] = fixed_res_image[2 + (source_x + source_y * fixed_res_width) * 4];
+                image_data[3] = 255;
+            }
+        }
+    }
 
     auto cb = submission.command_buffer;
 
@@ -2436,7 +2462,7 @@ int main(int argc, char **argv)
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(512, 512, "vulkan test", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(768, 768, "vulkan test", nullptr, nullptr);
 
     VulkanApp::InitializeInstance();
 
