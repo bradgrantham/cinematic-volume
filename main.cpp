@@ -1074,7 +1074,6 @@ std::vector<VkImage> GetSwapchainImages(VkDevice device, VkSwapchainKHR swapchai
     return swapchain_images;
 }
 
-
 namespace VulkanApp
 {
 
@@ -1877,15 +1876,7 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
 {
     static Buffer staging_buffer;
     static size_t previous_size = 0;
-    size_t image_size = swapchain_width * swapchain_height * 4;
-    if(image_size > previous_size) {
-        staging_buffer.Create(physical_device, device, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, image_size, 0, &staging_buffer.mapped));
-        previous_size = image_size;
-    }
 
-    uint8_t* image_data = static_cast<uint8_t*>(staging_buffer.mapped);
-    Render(image_data, swapchain_width, swapchain_height);
     auto& submission = submissions[submission_index];
 
     if(submission.draw_completed_fence_submitted) {
@@ -1906,6 +1897,16 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         }
     }
     auto& per_image = per_swapchainimage[swapchain_index];
+
+    size_t image_size = swapchain_width * swapchain_height * 4;
+    if(image_size > previous_size) {
+        printf("Resize buffer from %zd to %zd\n", previous_size, image_size);
+        staging_buffer.Create(physical_device, device, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, image_size, 0, &staging_buffer.mapped));
+        previous_size = image_size;
+    }
+    uint8_t* image_data = static_cast<uint8_t*>(staging_buffer.mapped);
+    Render(image_data, swapchain_width, swapchain_height);
 
     auto cb = submission.command_buffer;
 
@@ -1933,12 +1934,18 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     // Copy buffer to image
     VkBufferImageCopy copy {
         .bufferOffset = 0,
-        .bufferRowLength = 0, // static_cast<uint32_t>(surfWidth),
-        .bufferImageHeight = 0, // static_cast<uint32_t>(surfHeight),
+        .bufferRowLength = swapchain_width,
+        .bufferImageHeight = swapchain_height,
         .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
         .imageOffset = {0, 0, 0},
         .imageExtent = {static_cast<uint32_t>(swapchain_width), static_cast<uint32_t>(swapchain_height), 1},
     };
+
+    VkSurfaceCapabilitiesKHR surfcaps;
+    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
+    uint32_t width = surfcaps.currentExtent.width;
+    uint32_t height = surfcaps.currentExtent.height;
+    printf("source is %d x %d, surface is %d x %d\n", swapchain_width, swapchain_height, width, height);
 
     vkCmdCopyBufferToImage(cb, staging_buffer.buf, per_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
