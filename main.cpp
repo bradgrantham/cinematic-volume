@@ -1672,27 +1672,36 @@ std::shared_ptr<Image<vec3>> CalculateGradients(std::shared_ptr<Image<int16_t>> 
     float dw = .1f / volume->GetDepth();
 
     time_t then = time(NULL);
-
+    std::vector<std::thread*> threads;
     for(int k = 0; k < volume->GetDepth(); k++) {
         time_t now = time(NULL);
-        if(now != then) {
-            printf("slice %d...\n", k);
-            then = now;
-        }
-        for(int j = 0; j < volume->GetHeight(); j++) {
-            for(int i = 0; i < volume->GetWidth(); i++) {
-                vec3 str { i * 1.0f / volume->GetWidth(), j * 1.0f / volume->GetHeight(), k * 1.0f / volume->GetDepth() };
-                float gu = (volume->Sample(str + vec3(du, 0, 0)) - volume->Sample(str + vec3(-du, 0, 0))) / (du * 2);
-                float gv = (volume->Sample(str + vec3(0, dv, 0)) - volume->Sample(str + vec3(0, -dv, 0))) / (dv * 2);
-                float gw = (volume->Sample(str + vec3(0, 0, dw)) - volume->Sample(str + vec3(0, 0, -dw))) / (dw * 2);
-                vec3 normal {gu, gv, gw};
-                if(length(normal) > .001) {
-                    volume_normal->SetPixel(i, j, k, normalize(normal));
-                } else {
-                    volume_normal->SetPixel(i, j, k, vec3(0, 0, 0));
+        auto f = [&, k](){
+            if(now != then) {
+                printf("slice %d...\n", k);
+                then = now;
+            }
+            for(int j = 0; j < volume->GetHeight(); j++) {
+                for(int i = 0; i < volume->GetWidth(); i++) {
+                    vec3 str { i * 1.0f / volume->GetWidth(), j * 1.0f / volume->GetHeight(), k * 1.0f / volume->GetDepth() };
+                    float gu = (volume->Sample(str + vec3(du, 0, 0)) - volume->Sample(str + vec3(-du, 0, 0))) / (du * 2);
+                    float gv = (volume->Sample(str + vec3(0, dv, 0)) - volume->Sample(str + vec3(0, -dv, 0))) / (dv * 2);
+                    float gw = (volume->Sample(str + vec3(0, 0, dw)) - volume->Sample(str + vec3(0, 0, -dw))) / (dw * 2);
+                    vec3 normal {gu, gv, gw};
+                    if(length(normal) > .001) {
+                        volume_normal->SetPixel(i, j, k, normalize(normal));
+                    } else {
+                        volume_normal->SetPixel(i, j, k, vec3(0, 0, 0));
+                    }
                 }
             }
-        }
+        };
+        threads.push_back(new std::thread(f));
+    }
+    while(!threads.empty()) {
+        std::thread* thread = threads.back();
+        threads.pop_back();
+        thread->join();
+        delete thread;
     }
     return volume_normal;
 }
