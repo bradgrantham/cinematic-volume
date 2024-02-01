@@ -45,9 +45,9 @@ VkFormat GetVulkanFormat(float)
     return VK_FORMAT_R32_SFLOAT;
 }
 
-VkFormat GetVulkanFormat(uint16_t)
+VkFormat GetVulkanFormat(int16_t)
 {
-    return VK_FORMAT_R16_UNORM;
+    return VK_FORMAT_R16_SNORM;
 }
 
 VkFormat GetVulkanFormat(vec3)
@@ -1733,7 +1733,7 @@ void LoadCTData(int width, int height, int depth, const char *template_filename,
                     exit(EXIT_FAILURE);
                 }
                 for(int column = 0; column < height; column++) {
-                    ct_data[width * height * i + width * row + column] = static_cast<int16_t>(rowbuffer[width - 1 - column] * slope + intercept);
+                    ct_data[width * height * i + width * row + column] = static_cast<int16_t>(static_cast<float>(rowbuffer[width - 1 - column]) * slope) + intercept;
                 }
             }
             fclose(fp);
@@ -1774,7 +1774,8 @@ void LoadCTData(int width, int height, int depth, const char *template_filename,
     volume_normal = CalculateGradients(volume);
 }
 
-int16_t threshold = 300;
+int16_t opaque_threshold = 300;
+int16_t opaque_width = 100;
 
 bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
 {
@@ -1792,17 +1793,17 @@ bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
             int16_t density = volume->Sample(ray.at(t));
             // XXX here lookup density through a table
 
-            if(density > threshold) {
+            if((density >= opaque_threshold && (density < (opaque_threshold + opaque_width)))) {
                 normal = volume_normal->Sample(ray.at(t));
 
                 // XXX here lookup color through a table
                 if(density > 100) {
                     color = attenuation * vec3(1, 1, 1); 
-                } else {
+                } else if(false) {
                     color = attenuation * vec3(.8f, .2f, .2f); 
                 }
                 return true;
-            } else if(density > threshold - 100) {
+            } else if(false && (density > opaque_threshold - 100)) {
                 if(density > 100) {
                     attenuation *= vec3(.99f, .99f, .99f);
                 } else {
@@ -1814,7 +1815,7 @@ bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
     return false;
 }
 
-void Render(uint8_t *image_data, int surfWidth, int surfHeight)
+void Render(uint8_t *image_data, int image_width, int image_height)
 {
     mat4f modelview_3x3 = volume_manip.m_matrix;
     modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
@@ -1825,9 +1826,9 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
 
     std::vector<std::tuple<int, int, int, int>> tiles;
 
-    for(int tileY = 0; tileY < surfHeight; tileY += tileHeight) {
-        for(int tileX = 0; tileX < surfWidth; tileX += tileWidth) {
-            tiles.push_back({tileX, tileY, std::min(tileX + tileWidth, surfWidth), std::min(tileY + tileHeight, surfHeight)});
+    for(int tileY = 0; tileY < image_height; tileY += tileHeight) {
+        for(int tileX = 0; tileX < image_width; tileX += tileWidth) {
+            tiles.push_back({tileX, tileY, std::min(tileX + tileWidth, image_width), std::min(tileY + tileHeight, image_height)});
         }
     }
 
@@ -1835,8 +1836,11 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
         auto [tileX, tileY, width, height] = bounds;
         for(int y = tileY; y < height; y ++) {
             for(int x = tileX; x < width; x ++) {
-                float u = ((x + .5f) / (float)surfWidth) * 2.0f - 1.0f;
-                float v = ((surfHeight - (y + .5f) - 1) / (float)surfHeight) * 2.0f - 1.0f;
+                // std::feclearexcept(FE_ALL_EXCEPT);
+                // std::fetestexcept(FE_INVALID))
+                // std::fetestexcept(FE_DIVBYZERO))
+                float u = ((x + .5f) / (float)image_width) * 2.0f - 1.0f;
+                float v = ((image_height - (y + .5f) - 1) / (float)image_height) * 2.0f - 1.0f;
 
                 vec3 o {0, 0, 0};
                 vec3 d {u, v, -1};
@@ -1848,19 +1852,22 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
                 vec3 surface_color;
                 vec3 surface_normal;
                 bool hit = TraceVolume(object_ray, surface_color, surface_normal);
-                vec3 normal = surface_normal * modelview_normal;
 
-                vec3 color;
-                if(hit && (normal[0] != 0.0f) && (normal[1] != 0.0f) && (normal[2] != 0.0f)) {
-                    // float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
-                    float lighting = fabsf(dot(normal, vec3(0, 0, 1)));
-                    color = surface_color * lighting;
-                } else {
-                    color = vec3(0, 0, 0);
+                vec3 color = vec3(0, 0, 0);
+
+                if(hit && (surface_normal[0] != 0.0f) && (surface_normal[1] != 0.0f) && (surface_normal[2] != 0.0f)) {
+                    vec3 normal = normalize(surface_normal * modelview_normal);
+                    if((normal[0] != 0.0f) && (normal[1] != 0.0f) && (normal[2] != 0.0f)) {
+
+                        // float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
+                        float lighting = fabsf(dot(normal, vec3(0, 0, 1)));
+                        color = surface_color * lighting;
+                    }
                 }
 
-                int index = (x + y * surfWidth) * 4;
+                int index = (x + y * image_width) * 4;
                 // XXX is this hardcoding BGR?  I thought MVK would give me RGB...
+                // XXX check created swapchain image format
                 image_data[index + 2] = static_cast<uint8_t>(255 * std::clamp(color[0], 0.0f, 1.0f));
                 image_data[index + 1] = static_cast<uint8_t>(255 * std::clamp(color[1], 0.0f, 1.0f));
                 image_data[index + 0] = static_cast<uint8_t>(255 * std::clamp(color[2], 0.0f, 1.0f));
@@ -1869,16 +1876,22 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
     };
 
     // std::for_each(std::parallel_unsequenced_policy, tiles.begin(), tiles.end(), renderTile);
-    std::vector<std::thread*> threads;
-    for(auto const& t: tiles) {
-        auto f = [=](){ renderTile(t); };
-        threads.push_back(new std::thread(f));
-    }
-    while(!threads.empty()) {
-        std::thread* thread = threads.back();
-        threads.pop_back();
-        thread->join();
-        delete thread;
+    if(true) {
+        std::vector<std::thread*> threads;
+        for(auto const& t: tiles) {
+            auto f = [=](){ renderTile(t); };
+            threads.push_back(new std::thread(f));
+        }
+        while(!threads.empty()) {
+            std::thread* thread = threads.back();
+            threads.pop_back();
+            thread->join();
+            delete thread;
+        }
+    } else {
+        for(auto const& t: tiles) {
+            renderTile(t);
+        }
     }
 }
 
@@ -2262,34 +2275,44 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
                 glfwSetWindowShouldClose(window, GL_TRUE);
                 break;
 
+            case '1':
+                opaque_width = std::max(10, static_cast<int>(opaque_width / 1.2));
+                printf("opaque_width %d\n", opaque_width);
+                break;
+
+            case '2':
+                opaque_width = opaque_width * 1.2;
+                printf("opaque_width %d\n", opaque_width);
+                break;
+
             case GLFW_KEY_LEFT_BRACKET:
-                threshold -= 1000;
-                printf("threshold %d\n", threshold);
+                opaque_threshold -= 1000;
+                printf("opaque_threshold %d\n", opaque_threshold);
                 break;
 
             case GLFW_KEY_RIGHT_BRACKET:
-                threshold += 1000;
-                printf("threshold %d\n", threshold);
+                opaque_threshold += 1000;
+                printf("opaque_threshold %d\n", opaque_threshold);
                 break;
 
             case GLFW_KEY_SEMICOLON:
-                threshold -= 100;
-                printf("threshold %d\n", threshold);
+                opaque_threshold -= 100;
+                printf("opaque_threshold %d\n", opaque_threshold);
                 break;
 
             case GLFW_KEY_APOSTROPHE:
-                threshold += 100;
-                printf("threshold %d\n", threshold);
+                opaque_threshold += 100;
+                printf("opaque_threshold %d\n", opaque_threshold);
                 break;
 
             case GLFW_KEY_COMMA:
-                threshold -= 10;
-                printf("threshold %d\n", threshold);
+                opaque_threshold -= 10;
+                printf("opaque_threshold %d\n", opaque_threshold);
                 break;
 
             case GLFW_KEY_PERIOD:
-                threshold += 10;
-                printf("threshold %d\n", threshold);
+                opaque_threshold += 10;
+                printf("opaque_threshold %d\n", opaque_threshold);
                 break;
         }
     }
