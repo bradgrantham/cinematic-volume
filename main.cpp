@@ -1662,49 +1662,6 @@ void Cleanup()
 }
 
 std::shared_ptr<Image<int16_t>> volume;
-std::shared_ptr<Image<vec3>> volume_normal;
-
-std::shared_ptr<Image<vec3>> CalculateGradients(std::shared_ptr<Image<int16_t>> volume)
-{
-    auto volume_normal = std::make_shared<Image<vec3>>(volume->GetWidth(), volume->GetHeight(), volume->GetDepth());
-    float du = .1f / volume->GetWidth();
-    float dv = .1f / volume->GetHeight();
-    float dw = .1f / volume->GetDepth();
-
-    time_t then = time(NULL);
-    std::vector<std::thread*> threads;
-    for(int k = 0; k < volume->GetDepth(); k++) {
-        time_t now = time(NULL);
-        auto f = [&, k](){
-            if(now != then) {
-                printf("slice %d...\n", k);
-                then = now;
-            }
-            for(int j = 0; j < volume->GetHeight(); j++) {
-                for(int i = 0; i < volume->GetWidth(); i++) {
-                    vec3 str { i * 1.0f / volume->GetWidth(), j * 1.0f / volume->GetHeight(), k * 1.0f / volume->GetDepth() };
-                    float gu = (volume->Sample(str + vec3(du, 0, 0)) - volume->Sample(str + vec3(-du, 0, 0))) / (du * 2);
-                    float gv = (volume->Sample(str + vec3(0, dv, 0)) - volume->Sample(str + vec3(0, -dv, 0))) / (dv * 2);
-                    float gw = (volume->Sample(str + vec3(0, 0, dw)) - volume->Sample(str + vec3(0, 0, -dw))) / (dw * 2);
-                    vec3 normal {gu, gv, gw};
-                    if(length(normal) > .001) {
-                        volume_normal->SetPixel(i, j, k, normalize(normal));
-                    } else {
-                        volume_normal->SetPixel(i, j, k, vec3(0, 0, 0));
-                    }
-                }
-            }
-        };
-        threads.push_back(new std::thread(f));
-    }
-    while(!threads.empty()) {
-        std::thread* thread = threads.back();
-        threads.pop_back();
-        thread->join();
-        delete thread;
-    }
-    return volume_normal;
-}
 
 void LoadCTData(int width, int height, int depth, const char *template_filename, float slope, int intercept)
 {
@@ -1769,9 +1726,6 @@ void LoadCTData(int width, int height, int depth, const char *template_filename,
     }
 
     volume = std::make_shared<Image<int16_t>>(width, height, depth, ct_data);
-
-    printf("calculating gradients...\n");
-    volume_normal = CalculateGradients(volume);
 }
 
 int16_t opaque_threshold = 300;
@@ -1779,6 +1733,10 @@ int16_t opaque_width = 100;
 
 bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
 {
+    float du = .1f / volume->GetWidth();
+    float dv = .1f / volume->GetHeight();
+    float dw = .1f / volume->GetDepth();
+
     range ray_range{0, std::numeric_limits<float>::max()};
     range rn = ray_range.intersect(ray_intersect_box(volume_bounds, ray));
     vec3 attenuation {1.0f, 1.0f, 1.0f};
@@ -1794,7 +1752,11 @@ bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
             // XXX here lookup density through a table
 
             if((density >= opaque_threshold && (density < (opaque_threshold + opaque_width)))) {
-                normal = volume_normal->Sample(ray.at(t));
+                vec3 str = ray.at(t);
+                float gu = (volume->Sample(str + vec3(du, 0, 0)) - volume->Sample(str + vec3(-du, 0, 0))) / (du * 2);
+                float gv = (volume->Sample(str + vec3(0, dv, 0)) - volume->Sample(str + vec3(0, -dv, 0))) / (dv * 2);
+                float gw = (volume->Sample(str + vec3(0, 0, dw)) - volume->Sample(str + vec3(0, 0, -dw))) / (dw * 2);
+                normal = normalize(vec3(gu, gv, gw));
 
                 // XXX here lookup color through a table
                 if(density > 100) {
