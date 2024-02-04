@@ -63,13 +63,15 @@ private:
     uint32_t height;
     uint32_t depth;
     std::vector<T> pixels;
+    T clamp_value;
 
 public:
-    Image(int width, int height, int depth, std::vector<T>& pixels) :
+    Image(int width, int height, int depth, std::vector<T>& pixels, const T& clamp_value) :
         width(width),
         height(height),
         depth(depth),
-        pixels(std::move(pixels))
+        pixels(std::move(pixels)),
+        clamp_value(clamp_value)
     {}
 
     Image(int width, int height, int depth) :
@@ -101,6 +103,12 @@ T Image<T>::FetchUnchecked(uint32_t i, uint32_t j, uint32_t k)
 template <class T>
 T Image<T>::Sample(const vec3& str)
 {
+    if((str[0] < 0.0f) || (str[0] >= 1.0f) ||
+        (str[1] < 0.0f) || (str[1] >= 1.0f) ||
+        (str[1] < 0.0f) || (str[1] >= 1.0f)) {
+
+        return clamp_value;
+    }
     float u = str[0] * width;
     uint32_t i0 = std::clamp(static_cast<uint32_t>(u - .5), 0u, width - 1);
     uint32_t i1 = std::clamp(static_cast<uint32_t>(u + .5), 0u, width - 1);
@@ -1726,14 +1734,16 @@ void LoadCTData(int width, int height, int depth, const char *template_filename,
         }
     }
 
-    volume = std::make_shared<Image<VoxelType>>(width, height, depth, ct_data);
+    volume = std::make_shared<Image<VoxelType>>(width, height, depth, ct_data, -1000.0f);
 }
 
 VoxelType opaque_threshold = 300;
-VoxelType opaque_width = 100;
+VoxelType opaque_width = 350;
 
-bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
+std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 {
+    vec3 color{1, 0, 0};
+    vec3 normal{0, 0, 0};
     float du = .1f / volume->GetWidth();
     float dv = .1f / volume->GetHeight();
     float dw = .1f / volume->GetDepth();
@@ -1760,12 +1770,12 @@ bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
                 normal = normalize(vec3(gu, gv, gw));
 
                 // XXX here lookup color through a table
-                if((density > 100) {
+                if(density > 100) {
                     color = attenuation * vec3(1, 1, 1); 
                 } else {
                     color = attenuation * vec3(.8f, .2f, .2f); 
                 }
-                return true;
+                return std::make_tuple(true, color, normal);
             } else if(false && (density > opaque_threshold - 100)) {
                 if(density > 100) {
                     attenuation *= vec3(.99f, .99f, .99f);
@@ -1775,7 +1785,7 @@ bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
             }
         }
     }
-    return false;
+    return std::make_tuple(false, color, normal);
 }
 
 void Render(uint8_t *image_data, int image_width, int image_height)
@@ -1812,9 +1822,7 @@ void Render(uint8_t *image_data, int image_width, int image_height)
                 mat4f to_object = inverse(volume_manip.m_matrix);
                 ray object_ray = eye_ray * to_object;
 
-                vec3 surface_color;
-                vec3 surface_normal;
-                bool hit = TraceVolume(object_ray, surface_color, surface_normal);
+                auto [hit, surface_color, surface_normal] = TraceVolume(object_ray);
 
                 vec3 color = vec3(0, 0, 0);
 
@@ -1822,8 +1830,8 @@ void Render(uint8_t *image_data, int image_width, int image_height)
                     vec3 normal = normalize(surface_normal * modelview_normal);
                     if((normal[0] != 0.0f) && (normal[1] != 0.0f) && (normal[2] != 0.0f)) {
 
-                        float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
-                        // float lighting = fabsf(dot(normal, vec3(0, 0, 1)));
+                        // float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
+                        float lighting = fabsf(dot(normal, vec3(0, 0, 1)));
                         color = surface_color * lighting;
                     }
                 }
