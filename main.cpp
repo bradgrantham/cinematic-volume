@@ -1661,11 +1661,12 @@ void Cleanup()
     drawable->ReleaseDeviceData(device);
 }
 
-std::shared_ptr<Image<int16_t>> volume;
+typedef float VoxelType;
+std::shared_ptr<Image<VoxelType>> volume;
 
 void LoadCTData(int width, int height, int depth, const char *template_filename, float slope, int intercept)
 {
-    std::vector<int16_t> ct_data(width * height * depth);
+    std::vector<VoxelType> ct_data(width * height * depth);
     if(true) {
         std::vector<uint16_t> rowbuffer(width);
         time_t then = time(NULL);
@@ -1690,7 +1691,7 @@ void LoadCTData(int width, int height, int depth, const char *template_filename,
                     exit(EXIT_FAILURE);
                 }
                 for(int column = 0; column < height; column++) {
-                    ct_data[width * height * i + width * row + column] = static_cast<int16_t>(static_cast<float>(rowbuffer[width - 1 - column]) * slope) + intercept;
+                    ct_data[width * height * i + width * row + column] = static_cast<VoxelType>(static_cast<float>(rowbuffer[width - 1 - column]) * slope) + intercept;
                 }
             }
             fclose(fp);
@@ -1705,7 +1706,7 @@ void LoadCTData(int width, int height, int depth, const char *template_filename,
                 }
                 fprintf(fp, "P5 %d %d 255\n", width, height);
                 for(int j = 0; j < width * height; j++) {
-                    uint8_t b = ct_data[j + i * width * height] % 256;
+                    uint8_t b = (int)ct_data[j + i * width * height] % 256;
                     fwrite(&b, 1, 1, fp);
                 }
                 fclose(fp);
@@ -1725,11 +1726,11 @@ void LoadCTData(int width, int height, int depth, const char *template_filename,
         }
     }
 
-    volume = std::make_shared<Image<int16_t>>(width, height, depth, ct_data);
+    volume = std::make_shared<Image<VoxelType>>(width, height, depth, ct_data);
 }
 
-int16_t opaque_threshold = 300;
-int16_t opaque_width = 100;
+VoxelType opaque_threshold = 300;
+VoxelType opaque_width = 100;
 
 bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
 {
@@ -1748,7 +1749,7 @@ bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
             // enter_volume -= volume_bounds.boxmin;
             // exit_volume -= volume_bounds.boxmin;
 
-            int16_t density = volume->Sample(ray.at(t));
+            VoxelType density = volume->Sample(ray.at(t));
             // XXX here lookup density through a table
 
             if((density >= opaque_threshold && (density < (opaque_threshold + opaque_width)))) {
@@ -1759,9 +1760,9 @@ bool TraceVolume(const ray& ray, vec3& color, vec3& normal)
                 normal = normalize(vec3(gu, gv, gw));
 
                 // XXX here lookup color through a table
-                if(density > 100) {
+                if((density > 100) {
                     color = attenuation * vec3(1, 1, 1); 
-                } else if(false) {
+                } else {
                     color = attenuation * vec3(.8f, .2f, .2f); 
                 }
                 return true;
@@ -1821,8 +1822,8 @@ void Render(uint8_t *image_data, int image_width, int image_height)
                     vec3 normal = normalize(surface_normal * modelview_normal);
                     if((normal[0] != 0.0f) && (normal[1] != 0.0f) && (normal[2] != 0.0f)) {
 
-                        // float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
-                        float lighting = fabsf(dot(normal, vec3(0, 0, 1)));
+                        float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
+                        // float lighting = fabsf(dot(normal, vec3(0, 0, 1)));
                         color = surface_color * lighting;
                     }
                 }
@@ -2239,42 +2240,42 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
 
             case '1':
                 opaque_width = std::max(10, static_cast<int>(opaque_width / 1.2));
-                printf("opaque_width %d\n", opaque_width);
+                printf("opaque_width %f\n", (float)opaque_width);
                 break;
 
             case '2':
                 opaque_width = opaque_width * 1.2;
-                printf("opaque_width %d\n", opaque_width);
+                printf("opaque_width %f\n", (float)opaque_width);
                 break;
 
             case GLFW_KEY_LEFT_BRACKET:
                 opaque_threshold -= 1000;
-                printf("opaque_threshold %d\n", opaque_threshold);
+                printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_RIGHT_BRACKET:
                 opaque_threshold += 1000;
-                printf("opaque_threshold %d\n", opaque_threshold);
+                printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_SEMICOLON:
                 opaque_threshold -= 100;
-                printf("opaque_threshold %d\n", opaque_threshold);
+                printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_APOSTROPHE:
                 opaque_threshold += 100;
-                printf("opaque_threshold %d\n", opaque_threshold);
+                printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_COMMA:
                 opaque_threshold -= 10;
-                printf("opaque_threshold %d\n", opaque_threshold);
+                printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_PERIOD:
                 opaque_threshold += 10;
-                printf("opaque_threshold %d\n", opaque_threshold);
+                printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
         }
     }
