@@ -1744,9 +1744,9 @@ std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 {
     vec3 color{1, 0, 0};
     vec3 normal{0, 0, 0};
-    float du = .1f / volume->GetWidth();
-    float dv = .1f / volume->GetHeight();
-    float dw = .1f / volume->GetDepth();
+    float du = .5f / volume->GetWidth();
+    float dv = .5f / volume->GetHeight();
+    float dw = .5f / volume->GetDepth();
 
     range ray_range{0, std::numeric_limits<float>::max()};
     range rn = ray_range.intersect(ray_intersect_box(volume_bounds, ray));
@@ -1960,11 +1960,11 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         .imageExtent = {static_cast<uint32_t>(swapchain_width), static_cast<uint32_t>(swapchain_height), 1},
     };
 
+
     VkSurfaceCapabilitiesKHR surfcaps;
     VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
-    uint32_t width = surfcaps.currentExtent.width;
-    uint32_t height = surfcaps.currentExtent.height;
-    printf("source is %d x %d, surface is %d x %d\n", swapchain_width, swapchain_height, width, height);
+    [[maybe_unused]] uint32_t width = surfcaps.currentExtent.width;
+    [[maybe_unused]] uint32_t height = surfcaps.currentExtent.height;
 
     vkCmdCopyBufferToImage(cb, staging_buffer.buf, per_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
@@ -2283,6 +2283,16 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
 
             case GLFW_KEY_PERIOD:
                 opaque_threshold += 10;
+                printf("opaque_threshold %f\n", (float)opaque_threshold);
+                break;
+
+            case 'S':
+                opaque_threshold += 1;
+                printf("opaque_threshold %f\n", (float)opaque_threshold);
+                break;
+
+            case 'B':
+                opaque_threshold -= 1;
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
         }
