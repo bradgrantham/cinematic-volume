@@ -1669,7 +1669,7 @@ void Cleanup()
     drawable->ReleaseDeviceData(device);
 }
 
-typedef float VoxelType;
+using VoxelType = float;
 std::shared_ptr<Image<VoxelType>> volume;
 
 void LoadCTData(int width, int height, int depth, const char *template_filename, float slope, int intercept)
@@ -1740,6 +1740,29 @@ void LoadCTData(int width, int height, int depth, const char *template_filename,
 VoxelType opaque_threshold = 300;
 VoxelType opaque_width = 350;
 
+// vec3 LookupColorTable[4096];
+// vec3 LookupOpacityTable[4096];
+
+vec3 LookupColor(float density)
+{
+    if(density > 100) {
+        return vec3(1, 1, 1); 
+    } else {
+        return vec3(.8f, .2f, .2f); 
+    }
+}
+
+vec3 LookupOpacity(float density)
+{
+    if((density >= opaque_threshold && (density < (opaque_threshold + opaque_width)))) {
+        return vec3(1, 1, 1);
+    }
+    if(density > 100) {
+        return vec3(.99f, .99f, .99f);
+    }
+    return vec3(.99f, .9f, .9f);
+}
+
 std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 {
     vec3 color{1, 0, 0};
@@ -1760,28 +1783,24 @@ std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
             // exit_volume -= volume_bounds.boxmin;
 
             VoxelType density = volume->Sample(ray.at(t));
-            // XXX here lookup density through a table
 
-            if((density >= opaque_threshold && (density < (opaque_threshold + opaque_width)))) {
+            vec3 opacity = LookupOpacity(density);
+            // if((density >= opaque_threshold && (density < (opaque_threshold + opaque_width)))) {
+
+            if((opacity[0] == 1.0f) && (opacity[1] == 1.0f) && (opacity[2] == 1.0f)) {
+
                 vec3 str = ray.at(t);
                 float gu = (volume->Sample(str + vec3(du, 0, 0)) - volume->Sample(str + vec3(-du, 0, 0))) / (du * 2);
                 float gv = (volume->Sample(str + vec3(0, dv, 0)) - volume->Sample(str + vec3(0, -dv, 0))) / (dv * 2);
                 float gw = (volume->Sample(str + vec3(0, 0, dw)) - volume->Sample(str + vec3(0, 0, -dw))) / (dw * 2);
                 normal = normalize(vec3(gu, gv, gw));
 
-                // XXX here lookup color through a table
-                if(density > 100) {
-                    color = attenuation * vec3(1, 1, 1); 
-                } else {
-                    color = attenuation * vec3(.8f, .2f, .2f); 
-                }
+                color = attenuation * LookupColor(density); 
                 return std::make_tuple(true, color, normal);
+
             } else if(false && (density > opaque_threshold - 100)) {
-                if(density > 100) {
-                    attenuation *= vec3(.99f, .99f, .99f);
-                } else {
-                    attenuation *= vec3(.99f, .9f, .9f);
-                }
+
+                attenuation *= opacity;
             }
         }
     }
@@ -1794,8 +1813,8 @@ void Render(uint8_t *image_data, int image_width, int image_height)
     modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
     mat4f modelview_normal = inverse(transpose(modelview_3x3));
 
-    static constexpr int tileWidth = 32;
-    static constexpr int tileHeight = 32;
+    static constexpr int tileWidth = 64;
+    static constexpr int tileHeight = 64;
 
     std::vector<std::tuple<int, int, int, int>> tiles;
 
@@ -2291,7 +2310,7 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
-            case 'B':
+            case 'A':
                 opaque_threshold -= 1;
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
