@@ -1,8 +1,3 @@
-* Add a color / transparency table
-    -1000 : air
-    >3000 : metals
-    so 4096 might be sufficient?
-* Join color tables together
 * Add an ImGUI
 * Add clip regions - view, then circle a region to clip away
   * Will want undo pretty quickly

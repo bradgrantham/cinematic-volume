@@ -1740,43 +1740,49 @@ void LoadCTData(int width, int height, int depth, const char *template_filename,
 VoxelType opaque_threshold = 300;
 VoxelType opaque_width = 350;
 
-std::array<vec3,4096> LookupColorTable;
-std::array<vec3,4096> LookupOpacityTable;
+/*
+For CT scans, Hounsfield units:
+    -1000 : air
+    >3000 : metals
+    so 4096 might be sufficient?
+For MRI, a different resolution might be required.
+*/
+struct ColorOpacity
+{
+    vec3 color;
+    vec3 opacity;
+};
+std::array<ColorOpacity,4096> TransferFunction;
 
 vec3 LookupColor(float density)
 {
     uint32_t index = static_cast<uint32_t>(std::clamp(density, -1000.0f, 3000.0f) + 1000);
-    return LookupColorTable[index];
+    return TransferFunction[index].color;
 }
 
 vec3 LookupOpacity(float density)
 {
     uint32_t index = static_cast<uint32_t>(std::clamp(density, -1000.0f, 3000.0f) + 1000);
-    return LookupOpacityTable[index];
+    return TransferFunction[index].opacity;
 }
 
-void InitializeColorTable()
+void InitializeTransferFunction()
 {
-    for(uint32_t i = 0; i < LookupColorTable.size(); i++) {
+    for(uint32_t i = 0; i < TransferFunction.size(); i++) {
         float density = i - 1000.0f;
+
         if(density > 100.0f) {
-            LookupColorTable[i] = vec3(1, 1, 1); 
+            TransferFunction[i].color = vec3(1, 1, 1); 
         } else {
-            LookupColorTable[i] = vec3(.8f, .2f, .2f); 
+            TransferFunction[i].color = vec3(.8f, .2f, .2f); 
         }
-    }
-}
 
-void InitializeOpacityTable()
-{
-    for(uint32_t i = 0; i < LookupOpacityTable.size(); i++) {
-        float density = i - 1000.0f;
         if((density >= opaque_threshold && (density < (opaque_threshold + opaque_width)))) {
-            LookupOpacityTable[i] = vec3(1, 1, 1);
+            TransferFunction[i].opacity = vec3(1, 1, 1);
         } else if(density > 100) {
-            LookupOpacityTable[i] = vec3(.99f, .99f, .99f);
+            TransferFunction[i].opacity = vec3(.99f, .99f, .99f);
         } else {
-            LookupOpacityTable[i] = vec3(.99f, .9f, .9f);
+            TransferFunction[i].opacity = vec3(.99f, .9f, .9f);
         }
     }
 }
@@ -2294,49 +2300,49 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
 
             case GLFW_KEY_LEFT_BRACKET:
                 opaque_threshold -= 1000;
-                InitializeOpacityTable();
+                InitializeTransferFunction();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_RIGHT_BRACKET:
                 opaque_threshold += 1000;
-                InitializeOpacityTable();
+                InitializeTransferFunction();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_SEMICOLON:
                 opaque_threshold -= 100;
-                InitializeOpacityTable();
+                InitializeTransferFunction();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_APOSTROPHE:
                 opaque_threshold += 100;
-                InitializeOpacityTable();
+                InitializeTransferFunction();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_COMMA:
                 opaque_threshold -= 10;
-                InitializeOpacityTable();
+                InitializeTransferFunction();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_PERIOD:
                 opaque_threshold += 10;
-                InitializeOpacityTable();
+                InitializeTransferFunction();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case 'S':
                 opaque_threshold += 1;
-                InitializeOpacityTable();
+                InitializeTransferFunction();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case 'A':
                 opaque_threshold -= 1;
-                InitializeOpacityTable();
+                InitializeTransferFunction();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
         }
@@ -2453,8 +2459,7 @@ int main(int argc, char **argv)
 {
     using namespace VulkanApp;
 
-    InitializeColorTable();
-    InitializeOpacityTable();
+    InitializeTransferFunction();
 
     uint32_t specified_gpu = 0;
 
