@@ -1740,27 +1740,45 @@ void LoadCTData(int width, int height, int depth, const char *template_filename,
 VoxelType opaque_threshold = 300;
 VoxelType opaque_width = 350;
 
-// vec3 LookupColorTable[4096];
-// vec3 LookupOpacityTable[4096];
+std::array<vec3,4096> LookupColorTable;
+std::array<vec3,4096> LookupOpacityTable;
 
 vec3 LookupColor(float density)
 {
-    if(density > 100) {
-        return vec3(1, 1, 1); 
-    } else {
-        return vec3(.8f, .2f, .2f); 
-    }
+    uint32_t index = static_cast<uint32_t>(std::clamp(density, -1000.0f, 3000.0f) + 1000);
+    return LookupColorTable[index];
 }
 
 vec3 LookupOpacity(float density)
 {
-    if((density >= opaque_threshold && (density < (opaque_threshold + opaque_width)))) {
-        return vec3(1, 1, 1);
+    uint32_t index = static_cast<uint32_t>(std::clamp(density, -1000.0f, 3000.0f) + 1000);
+    return LookupOpacityTable[index];
+}
+
+void InitializeColorTable()
+{
+    for(uint32_t i = 0; i < LookupColorTable.size(); i++) {
+        float density = i - 1000.0f;
+        if(density > 100.0f) {
+            LookupColorTable[i] = vec3(1, 1, 1); 
+        } else {
+            LookupColorTable[i] = vec3(.8f, .2f, .2f); 
+        }
     }
-    if(density > 100) {
-        return vec3(.99f, .99f, .99f);
+}
+
+void InitializeOpacityTable()
+{
+    for(uint32_t i = 0; i < LookupOpacityTable.size(); i++) {
+        float density = i - 1000.0f;
+        if((density >= opaque_threshold && (density < (opaque_threshold + opaque_width)))) {
+            LookupOpacityTable[i] = vec3(1, 1, 1);
+        } else if(density > 100) {
+            LookupOpacityTable[i] = vec3(.99f, .99f, .99f);
+        } else {
+            LookupOpacityTable[i] = vec3(.99f, .9f, .9f);
+        }
     }
-    return vec3(.99f, .9f, .9f);
 }
 
 std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
@@ -1785,7 +1803,6 @@ std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
             VoxelType density = volume->Sample(ray.at(t));
 
             vec3 opacity = LookupOpacity(density);
-            // if((density >= opaque_threshold && (density < (opaque_threshold + opaque_width)))) {
 
             if((opacity[0] == 1.0f) && (opacity[1] == 1.0f) && (opacity[2] == 1.0f)) {
 
@@ -2277,41 +2294,49 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
 
             case GLFW_KEY_LEFT_BRACKET:
                 opaque_threshold -= 1000;
+                InitializeOpacityTable();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_RIGHT_BRACKET:
                 opaque_threshold += 1000;
+                InitializeOpacityTable();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_SEMICOLON:
                 opaque_threshold -= 100;
+                InitializeOpacityTable();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_APOSTROPHE:
                 opaque_threshold += 100;
+                InitializeOpacityTable();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_COMMA:
                 opaque_threshold -= 10;
+                InitializeOpacityTable();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case GLFW_KEY_PERIOD:
                 opaque_threshold += 10;
+                InitializeOpacityTable();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case 'S':
                 opaque_threshold += 1;
+                InitializeOpacityTable();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
 
             case 'A':
                 opaque_threshold -= 1;
+                InitializeOpacityTable();
                 printf("opaque_threshold %f\n", (float)opaque_threshold);
                 break;
         }
@@ -2426,13 +2451,16 @@ void MakeStubDrawableShape()
 
 int main(int argc, char **argv)
 {
+    using namespace VulkanApp;
+
+    InitializeColorTable();
+    InitializeOpacityTable();
+
     uint32_t specified_gpu = 0;
 
 #ifdef PLATFORM_WINDOWS
     setvbuf(stdout, NULL, _IONBF, 0);
 #endif
-
-    using namespace VulkanApp;
     
     MakeStubDrawableShape();
 
