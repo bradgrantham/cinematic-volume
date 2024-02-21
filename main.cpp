@@ -38,7 +38,7 @@
 template <typename T>
 size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
 
-// Had a nice template function call with no params here but MSVC squawked...
+// MSVC squawked at my templates before, we'll see if it does it again
 
 template <typename T>
 VkFormat GetVulkanFormat();
@@ -61,19 +61,17 @@ VkFormat GetVulkanFormat<vec3>()
     return VK_FORMAT_R32G32B32_SFLOAT;
 }
 
-VkFormat GetVulkanFormat(float)
-{
-    return VK_FORMAT_R32_SFLOAT;
-}
+struct RGBA8UNorm {
+    uint8_t r, g, b, a;
+    RGBA8UNorm(uint8_t r, uint8_t g, uint8_t b, uint8_t a) :
+        r(r), g(g), b(b), a(a)
+    {}
+};
 
-VkFormat GetVulkanFormat(int16_t)
+template <>
+VkFormat GetVulkanFormat<RGBA8UNorm>()
 {
-    return VK_FORMAT_R16_SNORM;
-}
-
-VkFormat GetVulkanFormat(vec3)
-{
-    return VK_FORMAT_R32G32B32_SFLOAT;
+    return VK_FORMAT_R8G8B8A8_UNORM;
 }
 
 template <class T>
@@ -102,8 +100,8 @@ public:
         pixels(width * height * depth)
     {}
 
-    // VkFormat GetVulkanFormat() { return GetVulkanFormat(pixels[0]); }
-    VkFormat GetVulkanFormat() { return GetVulkanFormat<T>(); }
+    // VkFormat GetVulkanFormat() { return ::GetVulkanFormat(pixels[0]); }
+    static VkFormat GetVulkanFormat() { return ::GetVulkanFormat<T>(); }
     int GetWidth() { return width; }
     int GetHeight() { return height; }
     int GetDepth() { return depth; }
@@ -915,26 +913,8 @@ void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device,
     vkDestroyCommandPool(device, command_pool, nullptr);
 }
 
-struct RGBA8UNormImage
-{
-private:
-    int width;
-    int height;
-    std::vector<uint8_t> rgba8_unorm;
-
-public:
-    RGBA8UNormImage(int width, int height, std::vector<uint8_t>& rgba8_unorm) :
-        width(width),
-        height(height),
-        rgba8_unorm(std::move(rgba8_unorm))
-    {}
-
-    VkFormat GetVulkanFormat() { return VK_FORMAT_R8G8B8A8_UNORM; }
-    int GetWidth() { return width; }
-    int GetHeight() { return height; }
-    void* GetData() { return rgba8_unorm.data(); }
-    size_t GetSize() { return rgba8_unorm.size(); }
-};
+typedef Image<RGBA8UNorm> RGBA8UNormImage;
+typedef std::shared_ptr<Image<RGBA8UNorm>> RGBA8UNormImagePtr;
 
 // Can't be Drawable because that conflicts with a type name in X11
 struct DrawableShape
@@ -947,7 +927,7 @@ struct DrawableShape
     float specular_color[4];
     float shininess;
 
-    std::shared_ptr<RGBA8UNormImage> texture;
+    RGBA8UNormImagePtr texture;
 
     VkImage textureImage { VK_NULL_HANDLE };
     VkDeviceMemory textureMemory { VK_NULL_HANDLE };
@@ -960,7 +940,7 @@ struct DrawableShape
     std::map<VkDevice, DrawableShapeBuffersOnDevice> buffers_by_device;
 
     DrawableShape(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
-        float specular_color[4], float shininess, std::shared_ptr<RGBA8UNormImage> texture) :
+        float specular_color[4], float shininess, RGBA8UNormImagePtr texture) :
             vertices(vertices),
             indices(indices),
             shininess(shininess),
@@ -2413,10 +2393,9 @@ void usage(const char *progName)
 void MakeStubDrawableShape()
 {
     using namespace VulkanApp;
+
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
-    float specular_color[4] { 0.8f, 0.8f, 0.8f, 0.8f };
-    float shininess = 10.0f;
 
     float white[4] {1, 1, 1, 1};
     float no_texture[2] {0, 0};
@@ -2425,21 +2404,18 @@ void MakeStubDrawableShape()
     float ul[3] {-1, -1, 0};
     float ur[3] {1, -1, 0};
     float n[3] {0, 0, 1};
-    vertices.push_back(Vertex(ll, n, white, no_texture));
-    vertices.push_back(Vertex(lr, n, white, no_texture));
-    vertices.push_back(Vertex(ul, n, white, no_texture));
-    vertices.push_back(Vertex(ur, n, white, no_texture));
-    indices.push_back(0);
-    indices.push_back(1);
-    indices.push_back(2);
-    indices.push_back(0);
-    indices.push_back(2);
-    indices.push_back(3);
+    for(const auto& corner: {ll, lr, ul, ur}) {
+        vertices.push_back(Vertex(corner, n, white, no_texture));
+    }
+    for(int i: {0, 1, 2, 0, 2, 3}) {
+        indices.push_back(i);
+    }
 
-    int width = 1, height = 1;
-    std::vector<uint8_t> rgba8_unorm = {255, 255, 255, 255};
-    auto texture = std::make_shared<RGBA8UNormImage>(width, height, rgba8_unorm);
+    std::vector<RGBA8UNorm> rgba8_unorm = {{255, 255, 255, 255}};
+    auto texture = std::make_shared<RGBA8UNormImage>(1, 1, 1, rgba8_unorm, RGBA8UNorm(255, 255, 255, 255));
 
+    float specular_color[4] { 0.8f, 0.8f, 0.8f, 0.8f };
+    float shininess = 10.0f;
     drawable = std::make_unique<DrawableShape>(vertices, indices, specular_color, shininess, texture);
 
     object_manip = manipulator(drawable->bounds, fov / 180.0f * 3.14159f / 2);
