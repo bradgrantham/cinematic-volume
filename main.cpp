@@ -40,6 +40,27 @@ size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
 
 // Had a nice template function call with no params here but MSVC squawked...
 
+template <typename T>
+VkFormat GetVulkanFormat();
+
+template <>
+VkFormat GetVulkanFormat<float>()
+{
+    return VK_FORMAT_R32_SFLOAT;
+}
+
+template <>
+VkFormat GetVulkanFormat<int16_t>()
+{
+    return VK_FORMAT_R16_UNORM;
+}
+
+template <>
+VkFormat GetVulkanFormat<vec3>()
+{
+    return VK_FORMAT_R32G32B32_SFLOAT;
+}
+
 VkFormat GetVulkanFormat(float)
 {
     return VK_FORMAT_R32_SFLOAT;
@@ -81,7 +102,8 @@ public:
         pixels(width * height * depth)
     {}
 
-    VkFormat GetVulkanFormat() { return GetVulkanFormat(pixels[0]); }
+    // VkFormat GetVulkanFormat() { return GetVulkanFormat(pixels[0]); }
+    VkFormat GetVulkanFormat() { return GetVulkanFormat<T>(); }
     int GetWidth() { return width; }
     int GetHeight() { return height; }
     int GetDepth() { return depth; }
@@ -147,27 +169,6 @@ T Image<T>::Sample(const vec3& str)
     T val = static_cast<T>(v0 * a0 + v1 * a1);
 
     return val;
-}
-
-template <typename T>
-VkFormat GetVulkanFormat();
-
-template <>
-VkFormat GetVulkanFormat<float>()
-{
-    return VK_FORMAT_R32_SFLOAT;
-}
-
-template <>
-VkFormat GetVulkanFormat<int16_t>()
-{
-    return VK_FORMAT_R16_UNORM;
-}
-
-template <>
-VkFormat GetVulkanFormat<vec3>()
-{
-    return VK_FORMAT_R32G32B32_SFLOAT;
 }
 
 static constexpr uint64_t DEFAULT_FENCE_TIMEOUT = 100000000000;
@@ -1744,9 +1745,10 @@ VoxelType opaque_width = 350;
 For CT scans, Hounsfield units:
     -1000 : air
     >3000 : metals
-    so 4096 might be sufficient?
+    so 4096 might be sufficient
 For MRI, a different resolution might be required.
 */
+
 struct ColorOpacity
 {
     vec3 color;
