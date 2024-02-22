@@ -1,6 +1,8 @@
 #ifndef __IMAGE_H__
 #define __IMAGE_H__
 
+#include <memory>
+
 template <typename T>
 VkFormat GetVulkanFormat();
 
@@ -24,9 +26,18 @@ VkFormat GetVulkanFormat<vec3>()
 
 struct RGBA8UNorm {
     uint8_t r, g, b, a;
+    RGBA8UNorm() {}
     RGBA8UNorm(uint8_t r, uint8_t g, uint8_t b, uint8_t a) :
         r(r), g(g), b(b), a(a)
     {}
+    RGBA8UNorm& operator=(const uint8_t color[4])
+    {
+        r = color[0];
+        g = color[1];
+        b = color[2];
+        a = color[3];
+        return *this;
+    }
 };
 
 template <>
@@ -67,7 +78,7 @@ public:
     int GetHeight() { return height; }
     int GetDepth() { return depth; }
     void* GetData() { return pixels.data(); }
-    size_t GetSize() { return pixels.size(); }
+    size_t GetSize() { return pixels.size() * sizeof(T); }
     T Sample(const vec3& str);
     void SetPixel(int i, int j, int k, const T& v) {
         pixels[i + j * GetWidth() + k * GetWidth() * GetHeight()] = v;
@@ -129,5 +140,8 @@ T Image<T>::Sample(const vec3& str)
 
     return val;
 }
+
+typedef Image<RGBA8UNorm> RGBA8UNormImage;
+typedef std::shared_ptr<Image<RGBA8UNorm>> RGBA8UNormImagePtr;
 
 #endif /* __IMAGE_H__ */
