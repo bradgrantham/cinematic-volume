@@ -1800,7 +1800,7 @@ std::tuple<bool,vec3,vec3> EvaluateVolume(t, next_t)
 std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 {
     VolumeStepper s;
-    float t = s.Init(volume->GetWidth(), volume->GetWidth(), volume->GetWidth(), ray, range());
+    float t = s.Init(volume->GetWidth(), volume->GetWidth(), volume->GetWidth(), ray, range(0.0, 1000.0));
     while(!s.IsDone()) {
         float next_t = s.Step();
         if(hit) {
@@ -1833,7 +1833,7 @@ std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 {
     vec3 attenuation {1.0f, 1.0f, 1.0f};
 
-    VolumeStepper s(volume->GetWidth(), volume->GetWidth(), volume->GetWidth(), ray, range());
+    VolumeStepper s(volume->GetWidth(), volume->GetWidth(), volume->GetWidth(), ray, range(0.0f, 1000.0f));
     float t = s.Start();
 
     while(!s.IsDone()) {
@@ -1936,6 +1936,24 @@ void Render(uint8_t *image_data, int image_width, int image_height)
     }
 }
 
+void ResizeRGBX8ToRGBA8(uint32_t source_width, uint32_t source_height, uint8_t *source_image, uint32_t dest_width, uint32_t dest_height, uint8_t* dest_image)
+{
+    for(uint32_t y = 0; y < dest_height; y++) {
+        for(uint32_t x = 0; x < dest_width; x++) {
+            auto dest = dest_image + (x + y * dest_width) * 4;
+
+            int source_x = x * source_width / dest_width;
+            int source_y = y * source_height / dest_height;
+            auto source = source_image + (source_x + source_y * source_width) * 4;
+
+            for(int i = 0; i < 3; i++) {
+                dest[i] = source[i];
+            }
+            dest[3] = 255;
+        }
+    }
+}
+
 uint32_t fixed_res_width = 512;
 uint32_t fixed_res_height = 512;
 
@@ -1983,19 +2001,10 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         if(fixed_res_image.size() < (fixed_res_width * fixed_res_height * 4)) {
             fixed_res_image.resize(fixed_res_width * fixed_res_height * 4);
         }
+
         Render(fixed_res_image.data(), fixed_res_width, fixed_res_height);
-        for(uint32_t y = 0; y < swapchain_height; y++) {
-            for(uint32_t x = 0; x < swapchain_width; x++) {
-                int source_x = x * fixed_res_width / swapchain_width;
-                int source_y = y * fixed_res_height / swapchain_height;
-                auto dest = image_data + (x + y * swapchain_width) * 4;
-                auto src = fixed_res_image.data() + (source_x + source_y * fixed_res_width) * 4;
-                for(int i = 0; i < 3; i++) {
-                    dest[i] = src[i];
-                }
-                dest[3] = 255;
-            }
-        }
+
+        ResizeRGBX8ToRGBA8(fixed_res_width, fixed_res_height, fixed_res_image.data(), swapchain_width, swapchain_height, image_data);
     }
 
     auto cb = submission.command_buffer;
