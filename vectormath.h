@@ -1188,7 +1188,8 @@ struct range
         t0(t0_),
         t1(t1_)
     {}
-    operator bool() { return t0 < t1; }
+    bool empty() const { return t0 >= t1; }
+    operator bool() const { return !empty(); }
     range &intersect(const range &r2)
     {
         t0 = std::max(t0, r2.t0);
@@ -1196,6 +1197,13 @@ struct range
         return *this;
     }
 };
+
+inline range range_intersect(const range r1, const range r2)
+{
+    float t0 = std::max(r1.t0, r2.t0);
+    float t1 = std::min(r1.t1, r2.t1);
+    return range(t0, t1);
+}
 
 inline range ray_intersect_box(const aabox& box, const ray& theray)
 {
