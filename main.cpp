@@ -1641,45 +1641,215 @@ void InitializeTransferFunction()
     }
 }
 
+#if 0
+
+struct VolumeStepper 
+{
+private:
+    // Should these be an array of structs for caching?
+    int next_plane[3];
+    float next_t[3];
+    int plane_increment[3];
+    int remaining_planes[3];
+
+    bool done;
+    int width, height, depth;
+    ray r;
+
+    float IntersectPlane(int axis, int plane)
+    {
+        assert(axis >= 0);
+        assert(axis < 3);
+        if(axis == 0) {
+            return (std::clamp(plane, 0, width) / (float)width - ray.o[0]) / ray.d[0];
+        } else if(axis == 1) {
+            return (std::clamp(plane, 0, height) / (float)height - ray.o[1]) / ray.d[1];
+        } else {
+            return (std::clamp(plane, 0, depth) / (float)depth - ray.o[2]) / ray.d[2];
+        }
+    }
+
+public:
+
+    // Should be constructor?  But constructed with r, and then
+    // need to return initial t using r, so need to return a float...
+    void Init(int width_, int height_, int depth_, const ray& r_, const range &range_)
+    {
+        width = width_;
+        height = height_;
+        depth = depth_;
+        r = r_;
+        done = false;
+
+        if(r.d[0] > 0) {
+            if(r.o[0] >= 1.0f) {
+                done = true;
+            } else {
+                plane_increment[0] = 1;
+                next_plane[0] = ceil(nextafterf(ray.o[0], plane_increment[0]) * width);
+                next_t[0] = IntersectPlane(0, next_plane[0]);
+            }
+        } else {
+            if(r.o[0] <= 0.0f) {
+                done = true;
+            } else {
+                plane_increment[0] = -1;
+                next_plane[0] = floor(nextafterf(ray.o[0], plane_increment[0]) * width);
+                next_t[0] = IntersectPlane(0, next_plane[0]);
+            }
+        }
+
+    int next_plane[3];
+    float next_t[3];
+    int plane_increment[3];
+    int remaining_planes[3];
+    }
+
+    bool IsDone()
+    {
+        return done;
+    }
+
+    float Step()
+    {
+        if(done) {
+            return std::numeric_limits<float>::max();
+        }
+
+        int axis;
+        if((next_t[0] < next_t[1]) && (next_t[0] < next_t[2])) {
+            axis = 0;
+        } else if(next_t[1] < next_t[2]) {
+            axis = 1;
+        } else {
+            axis = 1;
+        }
+
+        float t = next_t[axis];
+        if(remaining_planes[axis] > 0) {
+            next_plane[axis] += plane_increment[axis];
+            next_t[axis] = IntersectPlane(axis, next_plane[axis]);
+            remaining_planes[axis] --;
+        } else {
+            done = true;
+        }
+
+        return t;
+    }
+};
+
+#else
+
+struct VolumeStepper 
+{
+private:
+
+    range rn;
+    float step;
+    float current_t;
+    bool done;
+
+public:
+
+    // Should be constructor?  But constructed with r, and then
+    // need to return initial t using r, so need to return a float...
+    VolumeStepper(int width_, int height_, int depth_, const ray& r_, const range &rn_) :
+        rn(range_intersect(rn_, ray_intersect_box(volume_bounds, r_))),
+        step(.5f * 1.0f / std::max(std::max(width_, height_), depth_)),
+        current_t(rn.t0),
+        done(rn.empty())
+    {
+    }
+
+    float Start() const
+    {
+        return current_t;
+    }
+
+    bool IsDone() const
+    {
+        return done;
+    }
+
+    float Step()
+    {
+        if(done) {
+            return std::numeric_limits<float>::max();
+        }
+
+        current_t += step;
+        done = current_t > rn.t1;
+
+        return current_t;
+    }
+};
+
+#endif
+
+#if 0
+/* 
+returns a tuple of
+    bool = whether there was a hit
+    surface_color = color at hit
+    surface_normal = normal at point
+*/
+
+std::tuple<bool,vec3,vec3> EvaluateVolume(t, next_t)
+{
+}
+
+std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
+{
+    VolumeStepper s;
+    float t = s.Init(volume->GetWidth(), volume->GetWidth(), volume->GetWidth(), ray, range());
+    while(!s.IsDone()) {
+        float next_t = s.Step();
+        if(hit) {
+            auto [hit, color, normal] = EvaluateVolume(t, next_t);
+            if(hit) {
+                return std::make_tuple(false, color, normal);
+            }
+        }
+        t = next_t;
+    }
+
+    return std::make_tuple(false, {1, 0, 0}, {0, 0, 0});
+}
+#endif
+
 std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 {
     vec3 color{1, 0, 0};
     vec3 normal{0, 0, 0};
+    vec3 attenuation {1.0f, 1.0f, 1.0f};
     float du = .5f / volume->GetWidth();
     float dv = .5f / volume->GetHeight();
     float dw = .5f / volume->GetDepth();
 
-    range ray_range{0, std::numeric_limits<float>::max()};
-    range rn = ray_range.intersect(ray_intersect_box(volume_bounds, ray));
-    vec3 attenuation {1.0f, 1.0f, 1.0f};
-    if(rn) {
-        // vec3 enter_volume = ray.at(rn.t0);
-        // vec3 exit_volume = ray.at(rn.t1);
-        // XXX should calculate a step size
-        for(float t = rn.t0; t < rn.t1; t += 1/512.0) {
-            // enter_volume -= volume_bounds.boxmin;
-            // exit_volume -= volume_bounds.boxmin;
+    VolumeStepper s(volume->GetWidth(), volume->GetWidth(), volume->GetWidth(), ray, range());
+    float t = s.Start();
 
-            VoxelType density = volume->Sample(ray.at(t));
+    while(!s.IsDone()) {
+        vec3 str = ray.at(t); // texture s, t, r
+        VoxelType density = volume->Sample(str);
 
-            vec3 opacity = LookupOpacity(density);
+        vec3 opacity = LookupOpacity(density);
 
-            if((opacity[0] == 1.0f) && (opacity[1] == 1.0f) && (opacity[2] == 1.0f)) {
+        if((opacity[0] == 1.0f) && (opacity[1] == 1.0f) && (opacity[2] == 1.0f)) {
 
-                vec3 str = ray.at(t);
-                float gu = (volume->Sample(str + vec3(du, 0, 0)) - volume->Sample(str + vec3(-du, 0, 0))) / (du * 2);
-                float gv = (volume->Sample(str + vec3(0, dv, 0)) - volume->Sample(str + vec3(0, -dv, 0))) / (dv * 2);
-                float gw = (volume->Sample(str + vec3(0, 0, dw)) - volume->Sample(str + vec3(0, 0, -dw))) / (dw * 2);
-                normal = normalize(vec3(gu, gv, gw));
+            float gu = (volume->Sample(str + vec3(du, 0, 0)) - volume->Sample(str + vec3(-du, 0, 0))) / (du * 2);
+            float gv = (volume->Sample(str + vec3(0, dv, 0)) - volume->Sample(str + vec3(0, -dv, 0))) / (dv * 2);
+            float gw = (volume->Sample(str + vec3(0, 0, dw)) - volume->Sample(str + vec3(0, 0, -dw))) / (dw * 2);
+            normal = normalize(vec3(gu, gv, gw));
 
-                color = attenuation * LookupColor(density); 
-                return std::make_tuple(true, color, normal);
+            color = attenuation * LookupColor(density); 
+            return std::make_tuple(true, color, normal);
 
-            } else if(false && (density > opaque_threshold - 100)) {
+        } else if(false && (density > opaque_threshold - 100)) {
 
-                attenuation *= opacity;
-            }
+            attenuation *= opacity;
         }
+        t = s.Step();
     }
     return std::make_tuple(false, color, normal);
 }
@@ -1704,7 +1874,7 @@ void Render(uint8_t *image_data, int image_width, int image_height)
     auto renderTile = [=](const std::tuple<int, int, int, int>& bounds) {
         auto [tileX, tileY, width, height] = bounds;
         for(int y = tileY; y < height; y ++) {
-            for(int x = tileX; x < width; x ++) {
+            for(int x = tileX; x < width; x ++) { 
                 // std::feclearexcept(FE_ALL_EXCEPT);
                 // std::fetestexcept(FE_INVALID))
                 // std::fetestexcept(FE_DIVBYZERO))
