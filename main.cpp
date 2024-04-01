@@ -1004,7 +1004,6 @@ std::map<int, std::string> DrawingModeNames = {
 float frame = 0.0;
 
 aabox volume_bounds;
-manipulator volume_manip;
 manipulator object_manip;
 manipulator light_manip;
 manipulator* current_manip;
@@ -1817,14 +1816,22 @@ std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 }
 #endif
 
-std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
+vec3 GetVolumeNormal(std::shared_ptr<Image<VoxelType>> volume, vec3 coord)
 {
-    vec3 color{1, 0, 0};
-    vec3 normal{0, 0, 0};
-    vec3 attenuation {1.0f, 1.0f, 1.0f};
     float du = .5f / volume->GetWidth();
     float dv = .5f / volume->GetHeight();
     float dw = .5f / volume->GetDepth();
+
+    float gradientu = (volume->Sample(coord + vec3(du, 0, 0)) - volume->Sample(coord + vec3(-du, 0, 0))) / (du * 2);
+    float gradientv = (volume->Sample(coord + vec3(0, dv, 0)) - volume->Sample(coord + vec3(0, -dv, 0))) / (dv * 2);
+    float gradientw = (volume->Sample(coord + vec3(0, 0, dw)) - volume->Sample(coord + vec3(0, 0, -dw))) / (dw * 2);
+
+    return normalize(vec3(gradientu, gradientv, gradientw));
+}
+
+std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
+{
+    vec3 attenuation {1.0f, 1.0f, 1.0f};
 
     VolumeStepper s(volume->GetWidth(), volume->GetWidth(), volume->GetWidth(), ray, range());
     float t = s.Start();
@@ -1837,12 +1844,8 @@ std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 
         if((opacity[0] == 1.0f) && (opacity[1] == 1.0f) && (opacity[2] == 1.0f)) {
 
-            float gu = (volume->Sample(str + vec3(du, 0, 0)) - volume->Sample(str + vec3(-du, 0, 0))) / (du * 2);
-            float gv = (volume->Sample(str + vec3(0, dv, 0)) - volume->Sample(str + vec3(0, -dv, 0))) / (dv * 2);
-            float gw = (volume->Sample(str + vec3(0, 0, dw)) - volume->Sample(str + vec3(0, 0, -dw))) / (dw * 2);
-            normal = normalize(vec3(gu, gv, gw));
-
-            color = attenuation * LookupColor(density); 
+            vec3 normal = GetVolumeNormal(volume, str);
+            vec3 color = attenuation * LookupColor(density); 
             return std::make_tuple(true, color, normal);
 
         } else if(false && (density > opaque_threshold - 100)) {
@@ -1851,12 +1854,13 @@ std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
         }
         t = s.Step();
     }
-    return std::make_tuple(false, color, normal);
+
+    return std::make_tuple(false, vec3(1, 0, 0), vec3(0, 0, 0));
 }
 
 void Render(uint8_t *image_data, int image_width, int image_height)
 {
-    mat4f modelview_3x3 = volume_manip.m_matrix;
+    mat4f modelview_3x3 = object_manip.m_matrix;
     modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
     mat4f modelview_normal = inverse(transpose(modelview_3x3));
 
@@ -1885,7 +1889,7 @@ void Render(uint8_t *image_data, int image_width, int image_height)
                 vec3 d {u, v, -1};
                 ray eye_ray {{0, 0, 0}, {u, v, -1}};
 
-                mat4f to_object = inverse(volume_manip.m_matrix);
+                mat4f to_object = inverse(object_manip.m_matrix);
                 ray object_ray = eye_ray * to_object;
 
                 auto [hit, surface_color, surface_normal] = TraceVolume(object_ray);
@@ -2268,39 +2272,31 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
     if(action == GLFW_PRESS) {
         switch(key) {
             case 'M':
-                if(false) {
-                    drawing_mode = (drawing_mode + 1) % DRAW_MODE_COUNT;
-                    printf("Current drawing mode: %s\n", DrawingModeNames[drawing_mode].c_str());
-                    if(drawing_mode == DRAW_VULKAN) {
-                        current_manip = &object_manip;
-                    } else {
-                        current_manip = &volume_manip;
-                        volume_manip.m_mode = manipulator::ROTATE;
-                    }
-                }
+                drawing_mode = (drawing_mode + 1) % DRAW_MODE_COUNT;
+                printf("Current drawing mode: %s\n", DrawingModeNames[drawing_mode].c_str());
                 break;
 
             case 'W':
                 break;
 
             case 'R':
-                current_manip = &volume_manip;
-                volume_manip.m_mode = manipulator::ROTATE;
+                current_manip = &object_manip;
+                object_manip.m_mode = manipulator::ROTATE;
                 break;
 
             case 'O':
-                current_manip = &volume_manip;
-                volume_manip.m_mode = manipulator::ROLL;
+                current_manip = &object_manip;
+                object_manip.m_mode = manipulator::ROLL;
                 break;
 
             case 'X':
-                current_manip = &volume_manip;
-                volume_manip.m_mode = manipulator::SCROLL;
+                current_manip = &object_manip;
+                object_manip.m_mode = manipulator::SCROLL;
                 break;
 
             case 'Z':
-                current_manip = &volume_manip;
-                volume_manip.m_mode = manipulator::DOLLY;
+                current_manip = &object_manip;
+                object_manip.m_mode = manipulator::DOLLY;
                 break;
 
             case 'L':
@@ -2460,19 +2456,13 @@ void MakeStubDrawableShape()
     float shininess = 10.0f;
     drawable = std::make_unique<DrawableShape>(vertices, indices, specular_color, shininess, texture);
 
-    object_manip = manipulator(drawable->bounds, fov / 180.0f * 3.14159f / 2);
-    light_manip = manipulator(aabox(), fov / 180.0f * 3.14159f / 2);
-
     vec3 boxmin {0, 0, 0};
     vec3 boxmax {1,1,1};
     volume_bounds = aabox(boxmin, boxmax);
-    volume_manip = manipulator(volume_bounds, fov / 180.0f * 3.14159f / 2);
+    object_manip = manipulator(volume_bounds, fov / 180.0f * 3.14159f / 2);
+    light_manip = manipulator(aabox(), fov / 180.0f * 3.14159f / 2);
 
-    if(drawing_mode == DRAW_VULKAN) {
-        current_manip = &object_manip;
-    } else {
-        current_manip = &volume_manip;
-    }
+    current_manip = &object_manip;
 }
 
 int main(int argc, char **argv)
