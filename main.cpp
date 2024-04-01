@@ -1967,7 +1967,6 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
 
     size_t image_size = swapchain_width * swapchain_height * 4;
     if(image_size > previous_size) {
-        printf("Resize buffer from %zd to %zd\n", previous_size, image_size);
         staging_buffer.Create(physical_device, device, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, image_size, 0, &staging_buffer.mapped));
         previous_size = image_size;
@@ -1989,10 +1988,12 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
             for(uint32_t x = 0; x < swapchain_width; x++) {
                 int source_x = x * fixed_res_width / swapchain_width;
                 int source_y = y * fixed_res_height / swapchain_height;
-                image_data[0 + (x + y * swapchain_width) * 4] = fixed_res_image[0 + (source_x + source_y * fixed_res_width) * 4];
-                image_data[1 + (x + y * swapchain_width) * 4] = fixed_res_image[1 + (source_x + source_y * fixed_res_width) * 4];
-                image_data[2 + (x + y * swapchain_width) * 4] = fixed_res_image[2 + (source_x + source_y * fixed_res_width) * 4];
-                image_data[3] = 255;
+                auto dest = image_data + (x + y * swapchain_width) * 4;
+                auto src = fixed_res_image.data() + (source_x + source_y * fixed_res_width) * 4;
+                for(int i = 0; i < 3; i++) {
+                    dest[i] = src[i];
+                }
+                dest[3] = 255;
             }
         }
     }
