@@ -11,7 +11,7 @@
 #include <array>
 #include <filesystem>
 #include <thread>
-// #include <execution>
+#include <execution>
 
 #include <cstring>
 #include <cassert>
@@ -1816,6 +1816,7 @@ std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 }
 #endif
 
+// XXX should be templatized on image class
 vec3 GetVolumeNormal(std::shared_ptr<Image<VoxelType>> volume, vec3 coord)
 {
     float du = .5f / volume->GetWidth();
@@ -1829,37 +1830,86 @@ vec3 GetVolumeNormal(std::shared_ptr<Image<VoxelType>> volume, vec3 coord)
     return normalize(vec3(gradientu, gradientv, gradientw));
 }
 
-std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
+// XXX should be templatized on image class?
+void LookupParameters(std::shared_ptr<Image<VoxelType>> volume, vec3 coord, vec3& color, vec3& opacity)
 {
-    vec3 attenuation {1.0f, 1.0f, 1.0f};
+    VoxelType density = volume->Sample(coord);
+    // XXX Uh-oh, this needs to step through tables at table resolution as well
 
-    VolumeStepper s(volume->GetWidth(), volume->GetWidth(), volume->GetWidth(), ray, range(0.0f, 1000.0f));
-    float t = s.Start();
+    color = LookupColor(density);
+    opacity = LookupOpacity(density);
+}
+
+struct VolumePointParameters 
+{
+    float t;
+    vec3 color;
+    vec3 opacity;
+};
+
+// This should evaluate over distance covered, etc
+vec3 EvaluateAttenuation([[maybe_unused]] const VolumePointParameters& previous_params, const VolumePointParameters& ending_params)
+{
+    return ending_params.color;
+}
+
+// This should evaluate over distance covered, etc
+bool EvaluateScatter([[maybe_unused]] const VolumePointParameters& previous_params, VolumePointParameters& ending_params)
+{
+    // XXX do something smarter
+    if ((ending_params.opacity[0] == 1.0f) && (ending_params.opacity[1] == 1.0f) && (ending_params.opacity[2] == 1.0f)) {
+        // could alter ending_params.t and color
+        return true;
+    }
+    return false;
+}
+
+bool TraceVolume(const ray& ray, const range& rayrange, vec3& color, vec3& normal)
+{
+    vec3 attenuated {1.0f, 1.0f, 1.0f};
+
+    VolumeStepper s(volume->GetWidth(), volume->GetWidth(), volume->GetWidth(), ray, rayrange);
+    VolumePointParameters previous_params;
+    previous_params.t = s.Start();
+    LookupParameters(volume, ray.at(previous_params.t), previous_params.color, previous_params.opacity);
 
     while(!s.IsDone()) {
-        vec3 str = ray.at(t); // texture s, t, r
-        VoxelType density = volume->Sample(str);
+        VolumePointParameters stepped_params;
+        stepped_params.t = s.Step();
 
-        vec3 opacity = LookupOpacity(density);
+	// at the highest level, the ray passed through some volume
+	//   and was scattered or passed through the whole volume
+	// so between previous t and this Step's t, ray proceeded
+	//   through at least some volume and then may have been scattered
 
-        if((opacity[0] == 1.0f) && (opacity[1] == 1.0f) && (opacity[2] == 1.0f)) {
+        // calculate attenuation between previous color and current color using (stepped_t - previous_t)
 
-            vec3 normal = GetVolumeNormal(volume, str);
-            vec3 color = attenuation * LookupColor(density); 
-            return std::make_tuple(true, color, normal);
+        LookupParameters(volume, ray.at(stepped_params.t), stepped_params.color, stepped_params.opacity);
 
-        } else if(false && (density > opaque_threshold - 100)) {
+        // XXX replace this with function that determines attenuation and scattering
+        bool scattered = EvaluateScatter(previous_params, stepped_params);
 
-            attenuation *= opacity;
+        if(scattered) {
+            // attenuated *= EvaluateAttenuation(previous_params, stepped_params);
+            normal = GetVolumeNormal(volume, ray.at(stepped_params.t));
+            color = attenuated;
+            return true;
         }
-        t = s.Step();
+
+        // attenuated *= EvaluateAttenuation(previous_params, stepped_params);
+        if((attenuated[0] < 0.001) && (attenuated[1] < 0.001) && (attenuated[2] < 0.001)) {
+            return false;
+        }
+
+        previous_params = stepped_params;
     }
 
-    return std::make_tuple(false, vec3(1, 0, 0), vec3(0, 0, 0));
+    return false;
 }
 
 void Render(uint8_t *image_data, int image_width, int image_height)
 {
+    printf("render\n");
     mat4f modelview_3x3 = object_manip.m_matrix;
     modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
     mat4f modelview_normal = inverse(transpose(modelview_3x3));
@@ -1892,7 +1942,9 @@ void Render(uint8_t *image_data, int image_width, int image_height)
                 mat4f to_object = inverse(object_manip.m_matrix);
                 ray object_ray = eye_ray * to_object;
 
-                auto [hit, surface_color, surface_normal] = TraceVolume(object_ray);
+                vec3 surface_color;
+                vec3 surface_normal;
+                bool hit = TraceVolume(object_ray, range(0.0f, 1000.0f), surface_color, surface_normal);
 
                 vec3 color = vec3(0, 0, 0);
 
@@ -1916,8 +1968,11 @@ void Render(uint8_t *image_data, int image_width, int image_height)
         }
     };
 
-    // std::for_each(std::parallel_unsequenced_policy, tiles.begin(), tiles.end(), renderTile);
-    if(true) {
+// XXX MacOS
+#if 0
+    std::for_each(std::execution::par_unseq, tiles.begin(), tiles.end(), renderTile);
+#else
+    if(false) {
         std::vector<std::thread*> threads;
         for(auto const& t: tiles) {
             auto f = [=](){ renderTile(t); };
@@ -1934,6 +1989,7 @@ void Render(uint8_t *image_data, int image_width, int image_height)
             renderTile(t);
         }
     }
+#endif
 }
 
 void ResizeRGBX8ToRGBA8(uint32_t source_width, uint32_t source_height, uint8_t *source_image, uint32_t dest_width, uint32_t dest_height, uint8_t* dest_image)
