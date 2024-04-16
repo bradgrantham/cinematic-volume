@@ -112,25 +112,25 @@ public:
 
     // VkFormat GetVulkanFormat() { return ::GetVulkanFormat(pixels[0]); }
     static VkFormat GetVulkanFormat() { return ::GetVulkanFormat<T>(); }
-    int GetWidth() { return width; }
-    int GetHeight() { return height; }
-    int GetDepth() { return depth; }
+    int GetWidth() const { return width; }
+    int GetHeight() const { return height; }
+    int GetDepth() const { return depth; }
     void* GetData() { return pixels.data(); }
-    size_t GetSize() { return pixels.size() * sizeof(T); }
-    T Sample(const vec3& str);
+    size_t GetSize() const { return pixels.size() * sizeof(T); }
+    T Sample(const vec3& str) const ;
     void SetPixel(int i, int j, int k, const T& v) {
         pixels[i + j * GetWidth() + k * GetWidth() * GetHeight()] = v;
     }
-    T FetchUnchecked(uint32_t i, uint32_t j, uint32_t k);
+    T FetchUnchecked(uint32_t i, uint32_t j, uint32_t k) const;
 };
 
 template <class T>
-T Image<T>::FetchUnchecked(uint32_t i, uint32_t j, uint32_t k)
+T Image<T>::FetchUnchecked(uint32_t i, uint32_t j, uint32_t k) const
 {
     uint32_t tile_i = i / tile_size;
     uint32_t tile_j = j / tile_size;
     uint32_t tile_k = k / tile_size;
-    tile& t = tiled[tile_i + tile_j * width_tiles + tile_k * width_tiles * height_tiles];
+    const tile& t = tiled[tile_i + tile_j * width_tiles + tile_k * width_tiles * height_tiles];
 
     uint32_t i_ = i % tile_size;
     uint32_t j_ = j % tile_size;
@@ -141,7 +141,7 @@ T Image<T>::FetchUnchecked(uint32_t i, uint32_t j, uint32_t k)
 }
 
 template <class T>
-T Image<T>::Sample(const vec3& str)
+T Image<T>::Sample(const vec3& str) const
 {
     if((str[0] < 0.0f) || (str[0] >= 1.0f) ||
         (str[1] < 0.0f) || (str[1] >= 1.0f) ||
