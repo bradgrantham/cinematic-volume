@@ -1911,7 +1911,6 @@ bool TraceVolume(const ray& ray, const range& rayrange, vec3& color, vec3& norma
 
 void Render(uint8_t *image_data, int image_width, int image_height)
 {
-    printf("render\n");
     mat4f modelview_3x3 = object_manip.m_matrix;
     modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
     mat4f modelview_normal = inverse(transpose(modelview_3x3));
@@ -1919,18 +1918,19 @@ void Render(uint8_t *image_data, int image_width, int image_height)
     static constexpr int tileWidth = 64;
     static constexpr int tileHeight = 64;
 
-    std::queue<std::tuple<int, int, int, int>> tileQueue;
+    typedef std::array<int, 4> tile;
+    std::vector<tile> tileList;
 
     for(int tileY = 0; tileY < image_height; tileY += tileHeight) {
         for(int tileX = 0; tileX < image_width; tileX += tileWidth) {
-            tileQueue.push({tileX, tileY, std::min(tileX + tileWidth, image_width), std::min(tileY + tileHeight, image_height)});
+            tileList.push_back({tileX, tileY, std::min(tileX + tileWidth, image_width), std::min(tileY + tileHeight, image_height)});
         }
     }
 
-    auto renderTile = [=](const std::tuple<int, int, int, int>& bounds) {
-        auto [tileX, tileY, width, height] = bounds;
-        for(int y = tileY; y < height; y ++) {
-            for(int x = tileX; x < width; x ++) { 
+    auto renderTile = [=](const tile& bounds) {
+        auto [left, bottom, right, top] = bounds;
+        for(int y = bottom; y < top; y ++) {
+            for(int x = left; x < right; x ++) { 
                 // std::feclearexcept(FE_ALL_EXCEPT);
                 // std::fetestexcept(FE_INVALID))
                 // std::fetestexcept(FE_DIVBYZERO))
@@ -1973,28 +1973,29 @@ void Render(uint8_t *image_data, int image_width, int image_height)
 // XXX MacOS
 #if 0
 
-    std::for_each(std::execution::par_unseq, tileQueue.begin(), tileQueue.end(), renderTile);
+    std::for_each(std::execution::par_unseq, tileList.begin(), tileList.end(), renderTile);
 
 #else
 
-    if(true) {
+    // XXX I'm memory limited and will thrash cache, so single thread
+    if(false) {
 
-        int threadCount = /* single_threaded ? 1 : */ std::thread::hardware_concurrency();
+        int threadCount = std::thread::hardware_concurrency();
         std::vector<std::thread*> threads;
-        std::mutex tileQueueLock;
+        std::mutex tileListLock;
 
         for(int i = 0; i < threadCount; i++) {
-            auto f = [=, &tileQueue, &tileQueueLock](){
+            auto f = [=, &tileList, &tileListLock](){
                 bool allTilesCompleted = false;
                 do {
                     bool got_tile = false;
-                    std::tuple<int, int, int, int> mytile{0,0,0,0};
+                    tile mytile{0,0,0,0};
                     {
-                        std::scoped_lock<std::mutex> lock(tileQueueLock);
-                        allTilesCompleted = tileQueue.empty();
+                        std::scoped_lock<std::mutex> lock(tileListLock);
+                        allTilesCompleted = tileList.empty();
                         if(!allTilesCompleted) {
-                            mytile = tileQueue.front();
-                            tileQueue.pop();
+                            mytile = tileList.back();
+                            tileList.pop_back();
                             got_tile = true;
                         }
                     }
@@ -2015,9 +2016,7 @@ void Render(uint8_t *image_data, int image_width, int image_height)
 
     } else {
 
-        while(!tileQueue.empty()) {
-            auto mytile = tileQueue.front();
-            tileQueue.pop();
+        for(auto& mytile: tileList) {
             renderTile(mytile);
         }
     }
