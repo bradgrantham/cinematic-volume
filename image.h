@@ -56,6 +56,42 @@ private:
     std::vector<T> pixels;
     T clamp_value;
 
+    static constexpr int tile_size = 8;
+    uint32_t width_tiles;
+    uint32_t height_tiles;
+    uint32_t depth_tiles;
+    typedef std::array<T, tile_size * tile_size * tile_size> tile;
+    std::vector<tile> tiled;
+
+    void MakeTiled()
+    {
+        width_tiles = (width + tile_size - 1) / tile_size;
+        height_tiles = (height + tile_size - 1) / tile_size;
+        depth_tiles = (depth + tile_size - 1) / tile_size;
+        tiled.resize(width_tiles * height_tiles * depth_tiles);
+
+        for(uint32_t i = 0; i < width; i++) {
+            for(uint32_t j = 0; j < height; j++) {
+                for(uint32_t k = 0; k < depth; k++) {
+
+                    uint32_t tile_i = i / tile_size;
+                    uint32_t tile_j = j / tile_size;
+                    uint32_t tile_k = k / tile_size;
+                    tile& t = tiled[tile_i + tile_j * width_tiles + tile_k * width_tiles * height_tiles];
+
+                    uint32_t i_ = i % tile_size;
+                    uint32_t j_ = j % tile_size;
+                    uint32_t k_ = k % tile_size;
+                    uint32_t within_tile = i_ + j_ * tile_size + k_ * tile_size * tile_size;
+
+                    uint32_t within_image = i + j * width + k * width * height;
+
+                    t[within_tile] = pixels[within_image];
+                }
+            }
+        }
+    }
+
 public:
     Image(int width, int height, int depth, std::vector<T>& pixels, const T& clamp_value) :
         width(width),
@@ -63,7 +99,9 @@ public:
         depth(depth),
         pixels(std::move(pixels)),
         clamp_value(clamp_value)
-    {}
+    {
+        MakeTiled();
+    }
 
     Image(int width, int height, int depth) :
         width(width),
@@ -89,7 +127,17 @@ public:
 template <class T>
 T Image<T>::FetchUnchecked(uint32_t i, uint32_t j, uint32_t k)
 {
-    return pixels[i + j * width + k * width * height];
+    uint32_t tile_i = i / tile_size;
+    uint32_t tile_j = j / tile_size;
+    uint32_t tile_k = k / tile_size;
+    tile& t = tiled[tile_i + tile_j * width_tiles + tile_k * width_tiles * height_tiles];
+
+    uint32_t i_ = i % tile_size;
+    uint32_t j_ = j % tile_size;
+    uint32_t k_ = k % tile_size;
+    uint32_t within_tile = i_ + j_ * tile_size + k_ * tile_size * tile_size;
+
+    return t[within_tile];
 }
 
 template <class T>
