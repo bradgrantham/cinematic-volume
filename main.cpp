@@ -1821,9 +1821,9 @@ std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 // XXX should be templatized on image class
 vec3 GetVolumeNormal(std::shared_ptr<Image<VoxelType>> volume, vec3 coord)
 {
-    float du = .5f / volume->GetWidth();
-    float dv = .5f / volume->GetHeight();
-    float dw = .5f / volume->GetDepth();
+    float du = .1f / volume->GetWidth();
+    float dv = .1f / volume->GetHeight();
+    float dw = .1f / volume->GetDepth();
 
     float gradientu = (volume->Sample(coord + vec3(du, 0, 0)) - volume->Sample(coord + vec3(-du, 0, 0))) / (du * 2);
     float gradientv = (volume->Sample(coord + vec3(0, dv, 0)) - volume->Sample(coord + vec3(0, -dv, 0))) / (dv * 2);
