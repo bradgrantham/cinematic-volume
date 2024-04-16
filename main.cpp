@@ -1819,15 +1819,16 @@ std::tuple<bool,vec3,vec3> TraceVolume(const ray& ray)
 #endif
 
 // XXX should be templatized on image class
-vec3 GetVolumeNormal(std::shared_ptr<Image<VoxelType>> volume, vec3 coord)
+template <class Sampleable>
+vec3 GetVolumeNormal(const Sampleable& volume, vec3 coord)
 {
-    float du = .1f / volume->GetWidth();
-    float dv = .1f / volume->GetHeight();
-    float dw = .1f / volume->GetDepth();
+    float du = .1f / volume.GetWidth();
+    float dv = .1f / volume.GetHeight();
+    float dw = .1f / volume.GetDepth();
 
-    float gradientu = (volume->Sample(coord + vec3(du, 0, 0)) - volume->Sample(coord + vec3(-du, 0, 0))) / (du * 2);
-    float gradientv = (volume->Sample(coord + vec3(0, dv, 0)) - volume->Sample(coord + vec3(0, -dv, 0))) / (dv * 2);
-    float gradientw = (volume->Sample(coord + vec3(0, 0, dw)) - volume->Sample(coord + vec3(0, 0, -dw))) / (dw * 2);
+    float gradientu = (volume.Sample(coord + vec3(du, 0, 0)) - volume.Sample(coord + vec3(-du, 0, 0))) / (du * 2);
+    float gradientv = (volume.Sample(coord + vec3(0, dv, 0)) - volume.Sample(coord + vec3(0, -dv, 0))) / (dv * 2);
+    float gradientw = (volume.Sample(coord + vec3(0, 0, dw)) - volume.Sample(coord + vec3(0, 0, -dw))) / (dw * 2);
 
     return normalize(vec3(gradientu, gradientv, gradientw));
 }
@@ -1892,8 +1893,8 @@ bool TraceVolume(const ray& ray, const range& rayrange, vec3& color, vec3& norma
         bool scattered = EvaluateScatter(previous_params, stepped_params);
 
         if(scattered) {
-            // attenuated *= EvaluateAttenuation(previous_params, stepped_params);
-            normal = GetVolumeNormal(volume, ray.at(stepped_params.t));
+            attenuated *= EvaluateAttenuation(previous_params, stepped_params);
+            normal = GetVolumeNormal(*volume, ray.at(stepped_params.t));
             color = attenuated;
             return true;
         }
