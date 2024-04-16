@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <memory>
 #include <vector>
+#include <queue>
 #include <map>
 #include <unordered_map>
 #include <set>
@@ -12,6 +13,7 @@
 #include <filesystem>
 #include <thread>
 #include <execution>
+#include <atomic>
 
 #include <cstring>
 #include <cassert>
@@ -1917,11 +1919,11 @@ void Render(uint8_t *image_data, int image_width, int image_height)
     static constexpr int tileWidth = 64;
     static constexpr int tileHeight = 64;
 
-    std::vector<std::tuple<int, int, int, int>> tiles;
+    std::queue<std::tuple<int, int, int, int>> tileQueue;
 
     for(int tileY = 0; tileY < image_height; tileY += tileHeight) {
         for(int tileX = 0; tileX < image_width; tileX += tileWidth) {
-            tiles.push_back({tileX, tileY, std::min(tileX + tileWidth, image_width), std::min(tileY + tileHeight, image_height)});
+            tileQueue.push({tileX, tileY, std::min(tileX + tileWidth, image_width), std::min(tileY + tileHeight, image_height)});
         }
     }
 
@@ -1970,26 +1972,58 @@ void Render(uint8_t *image_data, int image_width, int image_height)
 
 // XXX MacOS
 #if 0
-    std::for_each(std::execution::par_unseq, tiles.begin(), tiles.end(), renderTile);
+
+    std::for_each(std::execution::par_unseq, tileQueue.begin(), tileQueue.end(), renderTile);
+
 #else
-    if(false) {
+
+    if(true) {
+
+        int threadCount = /* single_threaded ? 1 : */ std::thread::hardware_concurrency();
         std::vector<std::thread*> threads;
-        for(auto const& t: tiles) {
-            auto f = [=](){ renderTile(t); };
+        std::mutex tileQueueLock;
+
+        for(int i = 0; i < threadCount; i++) {
+            auto f = [=, &tileQueue, &tileQueueLock](){
+                bool allTilesCompleted = false;
+                do {
+                    bool got_tile = false;
+                    std::tuple<int, int, int, int> mytile{0,0,0,0};
+                    {
+                        std::scoped_lock<std::mutex> lock(tileQueueLock);
+                        allTilesCompleted = tileQueue.empty();
+                        if(!allTilesCompleted) {
+                            mytile = tileQueue.front();
+                            tileQueue.pop();
+                            got_tile = true;
+                        }
+                    }
+                    if(got_tile) {
+                        renderTile(mytile);
+                    }
+                } while(!allTilesCompleted);
+            };
             threads.push_back(new std::thread(f));
         }
+
         while(!threads.empty()) {
             std::thread* thread = threads.back();
             threads.pop_back();
             thread->join();
             delete thread;
         }
+
     } else {
-        for(auto const& t: tiles) {
-            renderTile(t);
+
+        while(!tileQueue.empty()) {
+            auto mytile = tileQueue.front();
+            tileQueue.pop();
+            renderTile(mytile);
         }
     }
+
 #endif
+
 }
 
 void ResizeRGBX8ToRGBA8(uint32_t source_width, uint32_t source_height, uint8_t *source_image, uint32_t dest_width, uint32_t dest_height, uint8_t* dest_image)

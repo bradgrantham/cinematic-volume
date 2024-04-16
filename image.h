@@ -97,10 +97,11 @@ T Image<T>::Sample(const vec3& str)
 {
     if((str[0] < 0.0f) || (str[0] >= 1.0f) ||
         (str[1] < 0.0f) || (str[1] >= 1.0f) ||
-        (str[1] < 0.0f) || (str[1] >= 1.0f)) {
+        (str[2] < 0.0f) || (str[2] >= 1.0f)) {
 
         return clamp_value;
     }
+
     float u = str[0] * width;
     uint32_t i0 = std::clamp(static_cast<uint32_t>(u - .5), 0u, width - 1);
     uint32_t i1 = std::clamp(static_cast<uint32_t>(u + .5), 0u, width - 1);
